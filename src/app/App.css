@@ -249,11 +249,28 @@
 .left-history-clear:hover { color: rgba(255, 255, 255, 0.6); }
 
 .left-history-item {
-  padding: 8px 0;
+  padding: 8px 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  cursor: default;
+  transition: background-color 0.2s, border-color 0.2s, transform 0.2s;
 }
 
 .left-history-item:last-child { border-bottom: none; }
+
+.left-history-item:hover {
+  background-color: rgba(214, 254, 129, 0.05);
+  border-color: rgba(214, 254, 129, 0.35);
+  transform: translateX(6px);
+}
+
+.left-history-item:hover .left-history-prompt {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.left-history-item:hover .left-history-time {
+  color: rgba(214, 254, 129, 0.5);
+}
 
 .left-history-prompt {
   font-family: 'Manrope', sans-serif;
@@ -280,8 +297,24 @@
 
 .footer p {
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.3);
+}
+
+.footer-sub {
+  margin-top: 4px;
+  font-size: 10px !important;
+  color: rgba(255, 255, 255, 0.18) !important;
+}
+
+.footer-link {
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.footer-link:hover {
+  color: rgba(255, 255, 255, 0.7);
 }
 
 /* Right — empty state */

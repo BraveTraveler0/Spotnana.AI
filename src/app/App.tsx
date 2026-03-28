@@ -173,7 +173,7 @@ export default function App() {
             transition={{ duration: 0.6, delay: 0.7, ease: 'easeOut' }}
             className="button-group"
           >
-            <button onClick={handleClear} disabled={isLoading} className="button button-clear">
+            <button onClick={handleClear} disabled={isLoading || !prompt.trim()} className="button button-clear">
               Clear
             </button>
             <button
@@ -219,7 +219,8 @@ export default function App() {
           )}
 
           <footer className="footer">
-            <p>Footer, Privacy Policy, Copyright, Darrien Carter 2026</p>
+            <p>© 2026 Spotana.AI · <span className="footer-link">Privacy Policy</span> · <span className="footer-link">Terms of Use</span></p>
+            <p className="footer-sub">Built by Darrien Carter</p>
           </footer>
         </div>
 
