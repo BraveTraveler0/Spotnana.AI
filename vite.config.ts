@@ -11,11 +11,15 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
+    watch: {
+      // Ignore generated Rust/Tauri outputs that can appear/disappear during builds.
+      ignored: ['**/src-tauri/target/**', '**/dist/**', '**/.git/**'],
+    },
     proxy: {
-      '/api/openai': {
-        target: 'https://api.openai.com',
+      '/api/ollama': {
+        target: 'http://localhost:11434',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/openai/, ''),
+        rewrite: (path) => path.replace(/^\/api\/ollama/, ''),
       },
     },
   },

@@ -22,3 +22,9 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Iris Feed — daily-generated personal content (briefs, events, reviews),
+# not application source. README.md is the one file worth keeping tracked.
+iris-feed/*.md
+iris-feed/*.json
+!iris-feed/README.md

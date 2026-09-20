@@ -1,6 +1,6 @@
-# Spotnana.AI
+# Artemis
 
-A travel AI assistant built with React + Vite. Ask anything about travel and get instant AI-powered responses. Built as part of the Spotnana Frontend Engineer Technical Assessment.
+A travel AI assistant built with React + Vite. Ask anything about travel and get instant local AI-powered responses.
 
 ## Features
 
@@ -23,8 +23,8 @@ A travel AI assistant built with React + Vite. Ask anything about travel and get
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-username/spotnana-ai.git
-cd spotnana-ai
+git clone https://github.com/your-username/artemis-ai.git
+cd artemis-ai
 ```
 
 ### 2. Install dependencies
@@ -62,4 +62,4 @@ npm run build
 
 ---
 
-I really enjoyed working on this assignment and I look forward to working with Spotnana!
+I really enjoyed building Artemis.

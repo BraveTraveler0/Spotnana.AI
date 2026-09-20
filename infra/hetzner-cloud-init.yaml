@@ -1,0 +1,83 @@
+#cloud-config
+#
+# Artemis "Sentinel" — Hetzner CX32 bootstrap
+# =============================================
+# What this does on first boot, unattended:
+#   1. Installs Tailscale and joins your tailnet (a private, encrypted mesh
+#      network — never exposed to the public internet).
+#   2. Installs Ollama and pulls a small fallback model (dolphin-mistral:7b —
+#      same as the laptop's fastest local tier) so the box is useful the
+#      moment it finishes booting.
+#   3. Rebinds Ollama to the Tailscale interface ONLY, not 0.0.0.0 — the
+#      exact misconfiguration behind roughly 175,000 publicly-exposed,
+#      unauthenticated Ollama instances found in a 2026 internet scan. No
+#      port from this server is ever opened to the public internet.
+#
+# How to use this:
+#   1. Generate a Tailscale auth key at
+#      https://login.tailscale.com/admin/settings/keys — use a single-use
+#      (non-reusable), short-expiry key. It's only needed once, at boot.
+#   2. Replace REPLACE_WITH_YOUR_TAILSCALE_AUTH_KEY below with that key.
+#   3. When creating the Hetzner server (Ubuntu 24.04, CX32 — 4 vCPU / 8GB;
+#      confirm current pricing at checkout, it has drifted before), paste
+#      this whole file into the "Cloud config" box under Advanced options.
+#   4. After boot (a few minutes — Ollama needs to download the model),
+#      verify from a machine already on your tailnet:
+#        tailscale ping <server-tailscale-ip>
+#        curl http://<server-tailscale-ip>:11434/api/tags
+#      And confirm it's NOT reachable from outside the tailnet — from any
+#      device not signed into it, curl http://<server-public-ip>:11434
+#      should just time out.
+#
+# Not in scope here: this box does not host a copy of your knowledge base.
+# Syncing the vault/PDF cache to it over the Tailscale link is a separate,
+# later step once this base tier is confirmed working.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+
+write_files:
+  - path: /usr/local/bin/artemis-bind-ollama-to-tailscale.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Wait for the tailscale interface to actually have an address —
+      # first boot can race this by a few seconds.
+      for _ in $(seq 1 30); do
+        TS_IP=$(tailscale ip -4 2>/dev/null || true)
+        [ -n "$TS_IP" ] && break
+        sleep 2
+      done
+      if [ -z "${TS_IP:-}" ]; then
+        echo "artemis: tailscale never came up with an IPv4 address — leaving Ollama on its default bind." >&2
+        exit 0
+      fi
+      mkdir -p /etc/systemd/system/ollama.service.d
+      cat > /etc/systemd/system/ollama.service.d/override.conf <<EOF
+      [Service]
+      Environment="OLLAMA_HOST=${TS_IP}:11434"
+      EOF
+      systemctl daemon-reload
+      systemctl restart ollama
+
+runcmd:
+  # 1. Tailscale first, before anything else touches the network. --ssh
+  #    enables Tailscale SSH, reachable only from inside the tailnet.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - tailscale up --authkey=REPLACE_WITH_YOUR_TAILSCALE_AUTH_KEY --hostname=artemis-sentinel --ssh
+
+  # 2. Ollama.
+  - curl -fsSL https://ollama.com/install.sh | sh
+  - systemctl enable --now ollama
+
+  # 3. Rebind Ollama to the tailscale-only address, then pull the fallback
+  #    model. The pull can take a few minutes on first boot.
+  - /usr/local/bin/artemis-bind-ollama-to-tailscale.sh
+  - sleep 5
+  - ollama pull dolphin-mistral:7b
+
+final_message: "Artemis Sentinel is up after $UPTIME seconds. Verify with: tailscale ping <this-host>, then curl http://<tailscale-ip>:11434/api/tags"
