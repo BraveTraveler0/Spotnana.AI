@@ -258,12 +258,7 @@ export default function TasksPanel({
           {task.done && <Check size={11} strokeWidth={3} />}
         </button>
         <div className="dd-task-main">
-          {agenda.time && (
-          <span className="dd-task-time">
-            {agenda.time}
-            {card.area?.trim() ? ` · ${card.area.trim()}` : ''}
-          </span>
-        )}
+          {agenda.time && <span className="dd-task-time">{agenda.time}</span>}
           <span className="dd-task-title">{task.label}</span>
           {agenda.description && <span className="dd-task-detail">{agenda.description}</span>}
           {task.source && <span className="dd-task-source">{task.source}</span>}

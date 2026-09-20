@@ -7,6 +7,23 @@
   box-sizing: border-box;
 }
 
+/* The window's own ground is the theme, not the browser's white. Pulling the
+   page down, resizing, or a scrollbar track then never shows a different
+   colour behind the app, and the system's scrollbars follow the dark scheme. */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background-color: rgb(7, 11, 18);
+  background-image: linear-gradient(131.214deg, rgb(7, 11, 18) 3.251%, rgb(6, 40, 95) 134.11%);
+  background-attachment: fixed;
+  overscroll-behavior: none;
+}
+
 .app-container {
   width: 100%;
   height: 100vh;
@@ -34,9 +51,11 @@
   flex-shrink: 0;
   height: 100vh;
   overflow-y: auto;
-  padding: clamp(24px, 4vw, 52px) clamp(20px, 4vw, 48px) 32px;
+  padding: 84px clamp(20px, 4vw, 48px) 32px;
   display: flex;
   flex-direction: column;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 76px);
+  mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 76px);
 }
 
 .left-section::-webkit-scrollbar { display: none; }
@@ -109,6 +128,8 @@
   height: 100vh;
   overflow-y: auto;
   padding: 84px clamp(20px, 4vw, 56px) 48px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 76px);
+  mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 76px);
 }
 
 .daily-header {
@@ -579,12 +600,24 @@
   width: min(460px, calc(100% - 32px));
   max-height: min(70vh, 680px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
   border-radius: 14px;
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   background: linear-gradient(170deg, rgba(8, 16, 30, 0.95), rgba(11, 30, 62, 0.93));
   backdrop-filter: blur(10px);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.settings-panel h3 {
+  margin-bottom: 6px;
+  font-family: 'Manrope', sans-serif;
+  font-size: 13px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .settings-header {
@@ -836,10 +869,12 @@
 .thread-messages {
   flex: 1;
   overflow-y: auto;
-  padding: clamp(24px, 4vw, 52px) clamp(20px, 4vw, 48px) 24px;
+  padding: 84px clamp(20px, 4vw, 48px) 24px;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 76px);
+  mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 76px);
 }
 
 .thread-messages::-webkit-scrollbar { width: 6px; }
@@ -967,6 +1002,14 @@
 .thread-send:active:not(:disabled) { transform: scale(0.95); }
 .thread-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Same button, same spot — becomes Stop while the AI is working. */
+.thread-send-stop { background-color: #ff8a80; }
+
+.thread-send-stop:hover:not(:disabled) {
+  background-color: #ff766b;
+  box-shadow: 0 0 20px rgba(255,138,128,0.35);
+}
+
 .right-section::-webkit-scrollbar {
   width: 6px;
 }
@@ -1056,8 +1099,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: rgba(255, 255, 255, 0.09);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   color: white;
   font-family: 'Manrope', sans-serif;
@@ -1095,15 +1138,23 @@
   transform: rotate(180deg);
 }
 
+/* Floats over the message box and buttons below instead of pushing them down. */
 .model-options-menu {
-  margin-top: 8px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(10, 18, 31, 0.95);
-  overflow: hidden;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-  max-height: 260px;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgb(16, 32, 66);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.4);
+  max-height: 300px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
 .model-option-item {
@@ -1283,6 +1334,13 @@
 }
 
 .button-submit:active:not(:disabled) { transform: scale(0.96); }
+
+.button-stop { background-color: #ff8a80; }
+
+.button-stop:hover:not(:disabled) {
+  background-color: #ff766b;
+  box-shadow: 0 0 25px rgba(255, 138, 128, 0.35);
+}
 
 .spinner {
   width: 18px;

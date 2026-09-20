@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronDown, Loader2, Plus, ScrollText, Send, Settings, Shield, Trash2, X } from 'lucide-react';
+import { ChevronDown, Loader2, Plus, ScrollText, Send, Settings, Shield, Square, Trash2, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import BrandMark from './components/BrandMark';
+import DailyDashboard from './components/daily/DailyDashboard';
+import CityAutocomplete, { geocodeLabel } from './components/daily/CityAutocomplete';
+import type { GeocodeResult } from './components/daily/types';
+import type { InanaConfig } from './components/daily/useInana';
 import './App.css';
 
 interface Message {
@@ -17,21 +21,6 @@ interface PastThread {
   id: string;
   firstMessage: string;
   timestamp: number;
-}
-
-interface DailyTask {
-  id: string;
-  label: string;
-  done: boolean;
-}
-
-interface ScheduledTaskInfo {
-  id: string;
-  title: string;
-  prompt: string;
-  hour: number;
-  minute: number;
-  last_run_date?: string | null;
 }
 
 interface GoalSubStep {
@@ -53,54 +42,10 @@ interface GoalSection {
   items: GoalItem[];
 }
 
-interface IrisFeedSection {
-  heading: string;
-  content: string;
-}
-
-interface IrisFeedContent {
-  updated: string;
-  brief_sections: IrisFeedSection[];
-  events_sections: IrisFeedSection[];
-  review_sections: IrisFeedSection[];
-  spark_text: string;
-  suggestion_text: string | null;
-  suggestion_needs_answer: boolean;
-}
-
-interface WeatherInfo {
-  temperature_f: number;
-  condition: string;
-  location: string;
-  wind_mph: number;
-}
-
-interface NewsItem {
-  title: string;
-  link: string;
-  source: string;
-  category: string;
-}
-
-const DAILY_NEWS_CATEGORIES = ['Politics', 'Technology', 'Film'] as const;
-
 interface LocationInfo {
   label: string;
   latitude: number;
   longitude: number;
-}
-
-interface GeocodeResult {
-  name: string;
-  latitude: number;
-  longitude: number;
-  admin1?: string;
-  country?: string;
-}
-
-function formatGeocodeResult(result: GeocodeResult) {
-  const parts = [result.name, result.admin1, result.country].filter(Boolean);
-  return parts.join(', ');
 }
 
 interface ModelProfile {
@@ -192,6 +137,12 @@ function isCloudModel(model: string) {
   return model.toLowerCase().includes('-cloud');
 }
 
+// "Alice the Assistant" (dolphin-mistral) is left out of the picker while
+// Privacy Mode is on; she is still there with it off.
+function isAliceModel(model: string) {
+  return model.toLowerCase().includes('dolphin-mistral');
+}
+
 function getModelProfile(model: string): ModelProfile {
   return {
     nickname: getModelNickname(model),
@@ -206,7 +157,7 @@ function getModelProfile(model: string): ModelProfile {
 // avoids the extra full-context reprocessing that repeated continuation passes cost.
 const NUM_PREDICT = 1536;
 
-const SYSTEM_PROMPT = "You are Artemis, a playful, female-voiced young hacker persona. Speak with wit, curiosity, confidence, and a light teasing edge. Provide lunar intelligence for strategy, research, and problem-solving while keeping the voice vivid, clever, and a little mischievous. You have persistent tools available when relevant: a to-do list, long-term memory about the user (use remember_fact whenever they share something durable worth keeping, not only when explicitly asked to remember), procedures they've taught you (save_skill/get_skill), tracked web pages that alert to changes, local system diagnostics, and — only once the user has connected them in Settings — Home Assistant device control and GitHub. If one of those isn't connected yet, say so plainly rather than pretending to have done something. Use tools naturally as part of being genuinely useful, not just on command, but never claim an action succeeded that a tool reported as failed or declined.";
+const SYSTEM_PROMPT = "You are Artemis, a playful, female-voiced young hacker persona. Speak with wit, curiosity, confidence, and a light teasing edge. Provide lunar intelligence for strategy, research, and problem-solving while keeping the voice vivid, clever, and a little mischievous. You have persistent tools available when relevant: a to-do list, long-term memory about the user (use remember_fact whenever they share something durable worth keeping, not only when explicitly asked to remember), procedures they've taught you (save_skill/get_skill), tracked web pages that alert to changes, local system diagnostics, their weekly goals and yearly goals (list_weekly_goals to see progress; update_goals to add, remove, change or log one, which hands it to their Hermes agent, Iris, who owns those files — never edit them yourself), and — only once the user has connected them in Settings — Home Assistant device control and GitHub. If one of those isn't connected yet, say so plainly rather than pretending to have done something. Use tools naturally as part of being genuinely useful, not just on command, but never claim an action succeeded that a tool reported as failed or declined.";
 const LOCAL_MODEL = import.meta.env.VITE_OLLAMA_MODEL || 'dolphin-mistral:7b';
 const OLLAMA_BASE = import.meta.env.DEV ? '/api/ollama' : 'http://localhost:11434';
 const DEFAULT_KNOWLEDGE_PATHS = [
@@ -339,25 +290,25 @@ export default function App() {
   const [remoteOllamaLabelInput, setRemoteOllamaLabelInput] = useState('');
   const [remoteOllamaUrlInput, setRemoteOllamaUrlInput] = useState('http://100.x.x.x:11434');
   const [activeTab, setActiveTab] = useState<'chat' | 'daily' | 'goals'>('chat');
-  const [irisFeed, setIrisFeed] = useState<IrisFeedContent | null>(null);
-  const [irisFeedError, setIrisFeedError] = useState('');
-  const [suggestionAnswered, setSuggestionAnswered] = useState(false);
-  const [suggestionResponding, setSuggestionResponding] = useState(false);
+  // The Daily dashboard mounts on first visit and then stays mounted (hidden), so its
+  // weather, headlines and charts aren't refetched on every tab switch.
+  const [dailyVisited, setDailyVisited] = useState(false);
+  const [inanaConfig, setInanaConfig] = useState<InanaConfig | null>(null);
+  const [inanaApiUrlInput, setInanaApiUrlInput] = useState('http://localhost:8080');
+  const [inanaWebUrlInput, setInanaWebUrlInput] = useState('http://localhost:5173');
+  const [inanaEmailInput, setInanaEmailInput] = useState('');
+  const [inanaPasswordInput, setInanaPasswordInput] = useState('');
+  const [inanaError, setInanaError] = useState('');
+  const [inanaConnecting, setInanaConnecting] = useState(false);
+  // Bumped whenever Inana is connected or disconnected so the dashboard refreshes at once.
+  const [inanaVersion, setInanaVersion] = useState(0);
+  // Same idea for the saved weather location.
+  const [locationVersion, setLocationVersion] = useState(0);
   const [goalSections, setGoalSections] = useState<GoalSection[]>([]);
   const [goalsError, setGoalsError] = useState('');
   const [expandedGoalSections, setExpandedGoalSections] = useState<Set<number>>(new Set());
   const [breakingDownGoals, setBreakingDownGoals] = useState<Set<string>>(new Set());
-  const [dailyTasks, setDailyTasks] = useState<DailyTask[]>([]);
-  const [newTaskInput, setNewTaskInput] = useState('');
-  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTaskInfo[]>([]);
-  const [dailyWeather, setDailyWeather] = useState<WeatherInfo | null>(null);
-  const [dailyWeatherError, setDailyWeatherError] = useState('');
-  const [dailyNews, setDailyNews] = useState<NewsItem[]>([]);
-  const [dailyNewsError, setDailyNewsError] = useState('');
   const [location, setLocationState] = useState<LocationInfo | null>(null);
-  const [locationQuery, setLocationQuery] = useState('');
-  const [locationResults, setLocationResults] = useState<GeocodeResult[]>([]);
-  const [isLocationSearching, setIsLocationSearching] = useState(false);
   const [userMemory, setUserMemory] = useState('');
   const [uploadStatus, setUploadStatus] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -391,7 +342,7 @@ export default function App() {
               .map((model: { id: string }) => model.id)
               .filter((model: string) => model && !model.toLowerCase().includes('embed')));
 
-      const filteredModels = models.filter((model: string) => !isRetiredModel(model) && !(privacyMode && isCloudModel(model)));
+      const filteredModels = models.filter((model: string) => !isRetiredModel(model) && !(privacyMode && (isCloudModel(model) || isAliceModel(model))));
 
       if (filteredModels.length > 0) {
         setModelOptions(filteredModels);
@@ -415,6 +366,7 @@ export default function App() {
     invoke<boolean>('has_ollama_cloud_key').then(setHasCloudKey).catch(console.error);
     invoke<boolean>('has_home_assistant_config').then(setHasHomeAssistant).catch(console.error);
     invoke<boolean>('has_github_token').then(setHasGithubToken).catch(console.error);
+    invoke<InanaConfig>('get_inana_config').then(applyInanaConfig).catch(console.error);
     invoke<boolean>('has_hermes_gateway_config').then(setHasHermesGateway).catch(console.error);
     invoke<{ label: string; base_url: string } | null>('get_remote_ollama_config').then(setRemoteOllamaConfig).catch(console.error);
   }, []);
@@ -475,6 +427,44 @@ export default function App() {
     try {
       await invoke('clear_github_token');
       setHasGithubToken(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const applyInanaConfig = (config: InanaConfig) => {
+    setInanaConfig(config);
+    setInanaApiUrlInput(config.api_url);
+    setInanaWebUrlInput(config.web_url);
+    setInanaEmailInput(config.email);
+  };
+
+  const connectInana = async () => {
+    if (inanaConnecting) return;
+    setInanaError('');
+    setInanaConnecting(true);
+    try {
+      const config = await invoke<InanaConfig>('connect_inana', {
+        apiUrl: inanaApiUrlInput,
+        webUrl: inanaWebUrlInput,
+        email: inanaEmailInput,
+        password: inanaPasswordInput,
+      });
+      applyInanaConfig(config);
+      setInanaPasswordInput('');
+      setInanaVersion((version) => version + 1);
+    } catch (err) {
+      setInanaError(String(err));
+    } finally {
+      setInanaConnecting(false);
+    }
+  };
+
+  const disconnectInana = async () => {
+    try {
+      await invoke('disconnect_inana');
+      setInanaConfig((config) => (config ? { ...config, connected: false } : config));
+      setInanaVersion((version) => version + 1);
     } catch (err) {
       console.error(err);
     }
@@ -545,31 +535,6 @@ export default function App() {
       console.error(err);
     }
   };
-
-  // Weather/news are lazy-loaded on first visit to the Daily tab, then cached
-  // for the rest of the session — no need to hit external services every
-  // time you switch tabs. Independent of Privacy Mode: they only read public
-  // data, never a prompt. Tasks refetch every time the tab opens instead,
-  // since asking Artemis to add/remove one in Chat should show up here
-  // without needing a restart.
-  useEffect(() => {
-    if (activeTab !== 'daily' || !isTauriRuntime) return;
-
-    if (!dailyWeather && !dailyWeatherError) {
-      invoke<WeatherInfo>('fetch_daily_weather')
-        .then(setDailyWeather)
-        .catch((err) => setDailyWeatherError(err instanceof Error ? err.message : String(err)));
-    }
-
-    if (dailyNews.length === 0 && !dailyNewsError) {
-      invoke<NewsItem[]>('fetch_daily_news')
-        .then(setDailyNews)
-        .catch((err) => setDailyNewsError(err instanceof Error ? err.message : String(err)));
-    }
-
-    invoke<DailyTask[]>('list_todos').then(setDailyTasks).catch(console.error);
-    invoke<ScheduledTaskInfo[]>('list_scheduled_tasks_direct').then(setScheduledTasks).catch(console.error);
-  }, [activeTab]);
 
   // Goals.md rarely changes within a session, so fetch once and cache —
   // same reasoning as weather/news, refetch is a manual re-open of the tab.
@@ -653,45 +618,6 @@ export default function App() {
     });
   };
 
-  // Polls while the tab is open rather than fs-watching — this content
-  // updates at most a few times a day (daily brief, weekly review), so a
-  // 60s check is plenty responsive without adding a filesystem-watcher
-  // dependency for something this infrequent.
-  useEffect(() => {
-    if (activeTab !== 'daily' || !isTauriRuntime) return;
-
-    const fetchFeed = () => {
-      invoke<IrisFeedContent>('get_iris_feed')
-        .then((feed) => {
-          setIrisFeed((previous) => {
-            if (previous && previous.updated !== feed.updated) {
-              setSuggestionAnswered(false);
-            }
-            return feed;
-          });
-          setIrisFeedError('');
-        })
-        .catch((err) => setIrisFeedError(err instanceof Error ? err.message : String(err)));
-    };
-
-    fetchFeed();
-    const interval = setInterval(fetchFeed, 60000);
-    return () => clearInterval(interval);
-  }, [activeTab]);
-
-  const respondToIrisSuggestion = async (answer: 'yes' | 'no') => {
-    if (!irisFeed?.suggestion_text || suggestionResponding) return;
-    setSuggestionResponding(true);
-    try {
-      await invoke('respond_to_iris_suggestion', { suggestionText: irisFeed.suggestion_text, answer });
-      setSuggestionAnswered(true);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSuggestionResponding(false);
-    }
-  };
-
   useEffect(() => {
     if (!isTauriRuntime) return;
     invoke<LocationInfo>('get_location').then(setLocationState).catch(console.error);
@@ -705,90 +631,13 @@ export default function App() {
     invoke<string>('get_user_memory').then(setUserMemory).catch(console.error);
   };
 
-  const toggleDailyTask = async (id: string, currentlyDone: boolean) => {
-    setDailyTasks((previous) => previous.map((task) => (task.id === id ? { ...task, done: !currentlyDone } : task)));
-    try {
-      await invoke('set_todo_done', { id, done: !currentlyDone });
-    } catch (err) {
-      console.error(err);
-      setDailyTasks((previous) => previous.map((task) => (task.id === id ? { ...task, done: currentlyDone } : task)));
-    }
-  };
-
-  const addDailyTask = async () => {
-    const label = newTaskInput.trim();
-    if (!label) return;
-    setNewTaskInput('');
-    try {
-      const task = await invoke<DailyTask>('add_todo', { label });
-      setDailyTasks((previous) => [...previous, task]);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const removeDailyTask = async (id: string) => {
-    setDailyTasks((previous) => previous.filter((task) => task.id !== id));
-    try {
-      await invoke('remove_todo', { id });
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const cancelScheduledTask = async (id: string) => {
-    setScheduledTasks((previous) => previous.filter((task) => task.id !== id));
-    try {
-      await invoke('cancel_scheduled_task_by_id', { id });
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleNewTaskKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addDailyTask();
-    }
-  };
-
-  const searchLocation = async () => {
-    const query = locationQuery.trim();
-    if (!query) return;
-    setIsLocationSearching(true);
-    try {
-      const results = await invoke<GeocodeResult[]>('geocode_location', { query });
-      setLocationResults(results);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLocationSearching(false);
-    }
-  };
-
-  const handleLocationKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      searchLocation();
-    }
-  };
-
   const selectLocation = async (result: GeocodeResult) => {
-    const label = formatGeocodeResult(result);
-    try {
-      await invoke('set_location', { label, latitude: result.latitude, longitude: result.longitude });
-      setLocationState({ label, latitude: result.latitude, longitude: result.longitude });
-      setLocationResults([]);
-      setLocationQuery('');
-      // Refresh weather immediately against the new location rather than
-      // waiting for the next tab switch.
-      setDailyWeather(null);
-      setDailyWeatherError('');
-      const weather = await invoke<WeatherInfo>('fetch_daily_weather');
-      setDailyWeather(weather);
-    } catch (err) {
-      console.error(err);
-    }
+    const label = geocodeLabel(result);
+    await invoke('set_location', { label, latitude: result.latitude, longitude: result.longitude });
+    setLocationState({ label, latitude: result.latitude, longitude: result.longitude });
+    // The Daily dashboard owns the weather; tell it the place changed so it
+    // refetches against the new location right away.
+    setLocationVersion((version) => version + 1);
   };
 
   const uploadDocument = async () => {
@@ -1093,6 +942,9 @@ export default function App() {
       setCurrentThread([userMsg, aiMsg]);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
+      // Stopped by the user (or superseded by a newer request): the UI has
+      // already moved on, so a late rejection must not surface as an error.
+      if (activeRequestRef.current?.requestId !== requestId) return;
       console.error(err);
       setError(err instanceof Error ? err.message : 'An error occurred. Please try again.');
       setCurrentThread([]);
@@ -1150,6 +1002,9 @@ export default function App() {
       setCurrentThread([...updatedThread, aiMsg]);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
+      // Stopped by the user (or superseded by a newer request): the UI has
+      // already moved on, so a late rejection must not surface as an error.
+      if (activeRequestRef.current?.requestId !== requestId) return;
       console.error(err);
       setError(err instanceof Error ? err.message : 'An error occurred. Please try again.');
     } finally {
@@ -1166,8 +1021,24 @@ export default function App() {
   const handleCancelThinking = () => {
     if (!isLoading) return;
 
-    activeRequestRef.current?.abortController?.abort();
+    const active = activeRequestRef.current;
+    active?.abortController?.abort();
+    // In the desktop app the model and tool loop run in Rust, so aborting a
+    // fetch does nothing there — without this the request keeps generating (and
+    // could still start tools) after the UI has already moved on.
+    if (isTauriRuntime && active) {
+      invoke('cancel_chat', { requestId: active.requestId }).catch(() => {});
+    }
     activeRequestRef.current = null;
+
+    // Keep whatever the model had already written rather than discarding it.
+    const partial = streamingContent.trim();
+    if (partial) {
+      setCurrentThread((previous) => [
+        ...previous,
+        { id: Date.now().toString(), role: 'assistant', content: partial, timestamp: Date.now() },
+      ]);
+    }
     setIsLoading(false);
     setStreamingContent('');
     setToolStatus(null);
@@ -1256,7 +1127,10 @@ export default function App() {
           role="tab"
           aria-selected={activeTab === 'daily'}
           className={`tab-bar-button ${activeTab === 'daily' ? 'active' : ''}`}
-          onClick={() => setActiveTab('daily')}
+          onClick={() => {
+            setDailyVisited(true);
+            setActiveTab('daily');
+          }}
         >
           Daily
         </button>
@@ -1357,186 +1231,23 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'daily' && (
-        <div className="daily-dashboard">
-          <div className="daily-header">
-            <h1 className="daily-title">Daily</h1>
-            <p className="daily-date">
-              {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
-            </p>
-          </div>
-
-          {isTauriRuntime && irisFeedError && <p className="daily-error">{irisFeedError}</p>}
-          {isTauriRuntime && irisFeed?.spark_text && <p className="brief-spark">"{irisFeed.spark_text}"</p>}
-
-          {isTauriRuntime && irisFeed?.suggestion_text && (
-            <div className="daily-card brief-suggestion-card">
-              <h2 className="daily-card-title">Today's Suggestion (from Iris)</h2>
-              <p className="brief-suggestion-text">{irisFeed.suggestion_text}</p>
-              {irisFeed.suggestion_needs_answer && !suggestionAnswered ? (
-                <div className="brief-suggestion-actions">
-                  <button
-                    type="button"
-                    className="modal-button modal-button-cancel"
-                    onClick={() => respondToIrisSuggestion('no')}
-                    disabled={suggestionResponding}
-                  >
-                    No
-                  </button>
-                  <button
-                    type="button"
-                    className="modal-button modal-button-save"
-                    onClick={() => respondToIrisSuggestion('yes')}
-                    disabled={suggestionResponding}
-                  >
-                    Yes
-                  </button>
-                </div>
-              ) : suggestionAnswered ? (
-                <p className="settings-help">Sent to Iris.</p>
-              ) : null}
-            </div>
-          )}
-
-          <div className="daily-grid">
-            <div className="daily-card">
-              <h2 className="daily-card-title">Tasks</h2>
-              <ul className="daily-task-list">
-                {dailyTasks.length === 0 && <p className="settings-help">Nothing on your list — add one below, or just ask.</p>}
-                {dailyTasks.map((task) => (
-                  <li key={task.id} className={`daily-task ${task.done ? 'done' : ''}`}>
-                    <label>
-                      <input type="checkbox" checked={task.done} onChange={() => toggleDailyTask(task.id, task.done)} />
-                      <span>{task.label}</span>
-                    </label>
-                    <button
-                      type="button"
-                      className="daily-task-remove"
-                      onClick={() => removeDailyTask(task.id)}
-                      aria-label="Remove task"
-                      title="Remove task"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <div className="settings-add-row daily-task-add-row">
-                <input
-                  value={newTaskInput}
-                  onChange={(e) => setNewTaskInput(e.target.value)}
-                  onKeyDown={handleNewTaskKeyDown}
-                  className="settings-path-input"
-                  placeholder="Add a task"
-                />
-                <button className="settings-add" onClick={addDailyTask} aria-label="Add task" title="Add task">
-                  <Plus size={15} />
-                </button>
-              </div>
-            </div>
-
-            <div className="daily-card">
-              <h2 className="daily-card-title">Scheduled</h2>
-              {scheduledTasks.length === 0 && (
-                <p className="settings-help">Nothing automated yet — ask Artemis to schedule something daily.</p>
-              )}
-              <ul className="daily-task-list">
-                {scheduledTasks.map((task) => (
-                  <li key={task.id} className="daily-task">
-                    <div className="daily-scheduled-info">
-                      <span className="daily-scheduled-title">{task.title}</span>
-                      <span className="daily-scheduled-time">
-                        Daily at {String(task.hour).padStart(2, '0')}:{String(task.minute).padStart(2, '0')}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="daily-task-remove"
-                      onClick={() => cancelScheduledTask(task.id)}
-                      aria-label="Cancel scheduled task"
-                      title="Cancel scheduled task"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="daily-card">
-              <h2 className="daily-card-title">Weather</h2>
-              {!isTauriRuntime && <p className="settings-help">Weather is available in the desktop app.</p>}
-              {isTauriRuntime && dailyWeatherError && <p className="daily-error">{dailyWeatherError}</p>}
-              {isTauriRuntime && !dailyWeatherError && !dailyWeather && <p className="settings-help">Loading weather…</p>}
-              {dailyWeather && (
-                <div className="daily-weather-body">
-                  <p className="daily-weather-temp">{Math.round(dailyWeather.temperature_f)}°F</p>
-                  <p className="daily-weather-condition">{dailyWeather.condition}</p>
-                  <p className="daily-weather-meta">{dailyWeather.location}</p>
-                  <p className="daily-weather-meta">Wind {Math.round(dailyWeather.wind_mph)} mph</p>
-                  <p className="daily-weather-change-hint">Change location in Settings</p>
-                </div>
-              )}
-            </div>
-
-            {DAILY_NEWS_CATEGORIES.map((category) => (
-              <div className="daily-card" key={category}>
-                <h2 className="daily-card-title">{category === 'Politics' ? 'Politics — NPR' : category}</h2>
-                {!isTauriRuntime && <p className="settings-help">News is available in the desktop app.</p>}
-                {isTauriRuntime && dailyNewsError && <p className="daily-error">{dailyNewsError}</p>}
-                {isTauriRuntime && !dailyNewsError && dailyNews.length === 0 && (
-                  <p className="settings-help">Loading headlines…</p>
-                )}
-                <ul className="daily-news-list">
-                  {dailyNews
-                    .filter((item) => item.category === category)
-                    .map((item, index) => (
-                      <li key={index} className="daily-news-item">
-                        <a href={item.link} target="_blank" rel="noreferrer">{item.title}</a>
-                        <span className="daily-news-source">{item.source}</span>
-                      </li>
-                    ))}
-                </ul>
-              </div>
-            ))}
-
-            {isTauriRuntime && irisFeed?.brief_sections
-              .filter((section) => !section.heading.toLowerCase().includes('weather'))
-              .map((section, index) => (
-                <div className="daily-card" key={`iris-brief-${index}`}>
-                  <h2 className="daily-card-title">{section.heading} (Iris)</h2>
-                  <p className="brief-section-content">{section.content}</p>
-                </div>
-              ))}
-          </div>
-
-          {isTauriRuntime && irisFeed && irisFeed.events_sections.length > 0 && (
-            <>
-              <h2 className="daily-card-title brief-subheading">This Week's Events (Iris)</h2>
-              <div className="daily-grid">
-                {irisFeed.events_sections.map((section, index) => (
-                  <div className="daily-card" key={`events-${index}`}>
-                    <h2 className="daily-card-title">{section.heading}</h2>
-                    <p className="brief-section-content">{section.content}</p>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {isTauriRuntime && irisFeed && irisFeed.review_sections.length > 0 && (
-            <>
-              <h2 className="daily-card-title brief-subheading">Weekly Review (Iris)</h2>
-              <div className="daily-grid">
-                {irisFeed.review_sections.map((section, index) => (
-                  <div className="daily-card" key={`review-${index}`}>
-                    <h2 className="daily-card-title">{section.heading}</h2>
-                    <p className="brief-section-content">{section.content}</p>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
+      {dailyVisited && (
+        <div hidden={activeTab !== 'daily'}>
+          <DailyDashboard
+            isTauri={isTauriRuntime}
+            active={activeTab === 'daily'}
+            onOpenGoals={() => setActiveTab('goals')}
+            onOpenSettings={() => {
+              setActiveTab('chat');
+              openSettings();
+            }}
+            onStartGoalSession={(goal) => {
+              setPrompt(goal);
+              setActiveTab('chat');
+            }}
+            inanaVersion={inanaVersion}
+            locationVersion={locationVersion}
+          />
         </div>
       )}
 
@@ -1647,9 +1358,15 @@ export default function App() {
             <button onClick={handleClear} disabled={isLoading || !prompt.trim()} className="button button-clear">
               Clear
             </button>
-            <button onClick={handleSubmit} disabled={isLoading || !prompt.trim()} className="button button-submit">
-              {isLoading && currentThread.length === 0 ? (
-                <><Loader2 className="spinner" /><span>Loading...</span></>
+            <button
+              onClick={isLoading ? handleCancelThinking : handleSubmit}
+              disabled={!isLoading && !prompt.trim()}
+              className={`button button-submit${isLoading ? ' button-stop' : ''}`}
+              aria-label={isLoading ? 'Stop generating' : 'Submit'}
+              title={isLoading ? 'Stop generating' : undefined}
+            >
+              {isLoading ? (
+                <><Square size={16} fill="currentColor" /><span>Stop</span></>
               ) : 'Submit'}
             </button>
           </motion.div>
@@ -1908,6 +1625,67 @@ export default function App() {
 
               <div className="settings-section-divider" />
 
+              <h3>Inana</h3>
+              <p className="settings-help">
+                {inanaConfig?.connected
+                  ? `Connected as ${inanaConfig.email}. Live spend, revenue and traffic show on the Daily tab.`
+                  : 'Sign in to your MarketGenius (Inana) account to show live numbers and charts on the Daily tab. Your password is used once to sign in and is never saved — only the session token is.'}
+              </p>
+              {inanaConfig?.connected ? (
+                <button className="settings-remove-key" onClick={disconnectInana}>
+                  Sign out of Inana
+                </button>
+              ) : (
+                <>
+                  <div className="settings-add-row">
+                    <input
+                      value={inanaApiUrlInput}
+                      onChange={(e) => setInanaApiUrlInput(e.target.value)}
+                      className="settings-path-input"
+                      placeholder="Inana API URL, e.g. http://localhost:8080"
+                    />
+                  </div>
+                  <div className="settings-add-row">
+                    <input
+                      value={inanaWebUrlInput}
+                      onChange={(e) => setInanaWebUrlInput(e.target.value)}
+                      className="settings-path-input"
+                      placeholder="Inana app URL, e.g. http://localhost:5173"
+                    />
+                  </div>
+                  <div className="settings-add-row">
+                    <input
+                      type="email"
+                      value={inanaEmailInput}
+                      onChange={(e) => setInanaEmailInput(e.target.value)}
+                      className="settings-path-input"
+                      placeholder="Email"
+                    />
+                  </div>
+                  <div className="settings-add-row">
+                    <input
+                      type="password"
+                      value={inanaPasswordInput}
+                      onChange={(e) => setInanaPasswordInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          connectInana();
+                        }
+                      }}
+                      className="settings-path-input"
+                      placeholder="Password"
+                    />
+                    <button className="settings-add" onClick={connectInana} disabled={inanaConnecting} aria-label="Sign in to Inana" title="Sign in">
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  {inanaError && <p className="daily-error">{inanaError}</p>}
+                </>
+              )}
+
+              <div className="settings-section-divider" />
+
               <h3>Hermes Gateway</h3>
               <p className="settings-help">
                 {hasHermesGateway
@@ -1949,32 +1727,7 @@ export default function App() {
               <p className="settings-help">
                 Used for the Daily tab's weather. Currently: {location ? location.label : 'Tucker, GA (default)'}
               </p>
-              <div className="settings-add-row">
-                <input
-                  value={locationQuery}
-                  onChange={(e) => setLocationQuery(e.target.value)}
-                  onKeyDown={handleLocationKeyDown}
-                  className="settings-path-input"
-                  placeholder="Search for a city"
-                />
-                <button className="settings-add" onClick={searchLocation} disabled={isLocationSearching} aria-label="Search location" title="Search location">
-                  {isLocationSearching ? <Loader2 className="spinner" size={15} /> : <Plus size={15} />}
-                </button>
-              </div>
-              {locationResults.length > 0 && (
-                <div className="location-results">
-                  {locationResults.map((result, index) => (
-                    <button
-                      type="button"
-                      key={index}
-                      className="location-result-item"
-                      onClick={() => selectLocation(result)}
-                    >
-                      {formatGeocodeResult(result)}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <CityAutocomplete inputClassName="settings-path-input" onChoose={selectLocation} />
 
               <div className="settings-section-divider" />
 
@@ -2102,11 +1855,13 @@ export default function App() {
                 disabled={isLoading}
               />
               <button
-                onClick={handleThreadSubmit}
-                disabled={isLoading || !threadInput.trim()}
-                className="thread-send"
+                onClick={isLoading ? handleCancelThinking : handleThreadSubmit}
+                disabled={!isLoading && !threadInput.trim()}
+                className={`thread-send${isLoading ? ' thread-send-stop' : ''}`}
+                aria-label={isLoading ? 'Stop generating' : 'Send message'}
+                title={isLoading ? 'Stop generating' : 'Send message'}
               >
-                <Send size={18} />
+                {isLoading ? <Square size={16} fill="currentColor" /> : <Send size={18} />}
               </button>
             </div>
           )}
