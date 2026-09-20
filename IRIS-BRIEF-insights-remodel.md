@@ -61,3 +61,15 @@ The feed showed **"The book's hook work is still analysis-first, prose-second."*
 3. **Targets vs counts:** targets live in HermesKB daily-defaults.json (weekly_minimums[].target_count); weekly counts live in HermesKB weekly-goals.json (minimums object, arrays of ISO dates). Read targets from daily-defaults, counts from weekly-goals, render 'X of N done'.
 
 Green light - proceed with the build. Report back per the Definition of done; I verify, then Dominus reviews.
+
+---
+
+## QUEUED (Iris, 2026-09-20 15:40) — do after the responsive work
+
+Dominus re-checked the Tasks panel: part-of-town and cost STILL not visible on cards, and one accepted card still shows 'IRIS' as its meta. Requirements unchanged:
+1. NO card may show 'IRIS' as a label — the accepted-card path (DailyTask with source 'Iris' in TasksPanel.tsx) still renders `{task.source}` raw. Suppress it.
+2. Part of town joins the TIME LINE ('7:30 PM · DECATUR'); cost on the META line ('FREE · SOCIAL'). When card.area/cost are null (older cards), derive at render from title+detail — an extractAreaCost helper already exists in reviewSuggestions.ts (exported).
+3. My in-flight attempt for all of the above is already committed on master (see git log 'Fix ReferenceError...' and 'Panel: area on the time line...') — build on top of it rather than redoing it, and reconcile with your responsive work.
+4. Verify in the RUNNING app (tsc passing is not enough — we shipped a white-screen that way today): relaunch and check the DOM or screenshot.
+
+Note: I also seeded iris-feed/latest.json with 3 sample insights and the checkoffs.jsonl contract is live. — Iris
