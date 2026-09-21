@@ -1,17 +1,21 @@
 import { localDay } from './agenda';
+import { DOMAIN_IN_PARENS, MAX_TITLE, clipWords, eventEntries, labelledEntries, parseEntry, type EventEntry } from './eventEntry';
 import { itemsOf, plain, sentencesOf } from './insights';
 import { stripInline } from './markdown';
+import { extractAreaCost } from './place';
 import type { IrisFeedSection, IrisTaskCard } from './types';
 import { inferWhen, isEvergreen, stripWhen } from './whenParser';
 
 // Iris's weekly review lists things to do (its "Local Activities", "Date
-// Strategy" and "Standing Tracks" parts) as paragraphs. Each named event or track becomes a suggestion
-// card, until she writes them into the feed's own suggestions herself.
+// Strategy" and "Standing Tracks" parts). Each named event or track becomes a suggestion
+// card, until she writes them into the feed's own suggestions herself. Local Activities
+// come in three wordings, all read (eventEntry.ts has the two newest): a name with
+// labelled When / Where / Who / Price lines, numbered entries inside a paragraph, and
+// plain one-sentence-per-event paragraphs.
 
 // Ids start with this so the dashboard knows Iris has never heard of them.
 export const REVIEW_PREFIX = 'review-';
 
-const MAX_TITLE = 80;
 const MAX_DESCRIPTION = 250;
 
 const CATEGORIES: [RegExp, string][] = [
@@ -27,42 +31,9 @@ const CATEGORIES: [RegExp, string][] = [
 
 const categoryOf = (label: string) => CATEGORIES.find(([match]) => match.test(label))?.[1] ?? 'other';
 
-// Part of town and cost live inside the wording ("... in Doraville", "free lesson",
-// "~$15-20"). Pull them out into their own fields so the UI can show them where
-// they belong; the description keeps everything (the UI trims for display).
-const AREAS = [
-  'Doraville', 'Midtown', 'Downtown', 'Buckhead', 'Decatur', 'East Atlanta',
-  'Old Fourth Ward', 'Inman Park', 'Virginia-Highland', 'Little Five Points',
-  'Poncey-Highland', 'Edgewood', 'Kirkwood', 'Avondale Estates', 'Tucker',
-  'North Druid Hills', 'Brookhaven', 'Chamblee',
-];
-
-export function extractAreaCost(description: string): { area: string | null; cost: string | null; cleaned: string } {
-  let cleaned = description;
-  let area: string | null = null;
-  for (const name of AREAS) {
-    const pattern = new RegExp(`\\b(?:in|at|near)\\s+${name}\\b`, 'i');
-    if (pattern.test(cleaned)) {
-      area = name;
-      break;
-    }
-  }
-  // also catch a bare trailing "(Decatur)" or "— Doraville"
-  if (!area) {
-    for (const name of AREAS) {
-      if (new RegExp(`\\b${name}\\b`, 'i').test(cleaned)) {
-        area = name;
-        break;
-      }
-    }
-  }
-  let cost: string | null = null;
-  const freeMatch = cleaned.match(/\bfree\b|no cover|no cost/i);
-  const priceMatch = cleaned.match(/(?:~?\$\s?\d{1,3}(?:-\s*~?\$?\d{1,3})?)/);
-  if (freeMatch) cost = 'Free';
-  else if (priceMatch) cost = priceMatch[0].replace(/\s+/g, '').replace('-', '-');
-  return { area, cost, cleaned };
-}
+// Part of town and cost are read out of the wording by place.ts; the Tasks panel
+// imports the reader from here.
+export { extractAreaCost };
 const slug = (text: string) =>
   text
     .toLowerCase()
@@ -76,13 +47,6 @@ function weekStamp(today: Date): string {
   return localDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7)));
 }
 
-function clipWords(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const room = text.slice(0, max - 1);
-  return `${room.slice(0, room.lastIndexOf(' ') > 0 ? room.lastIndexOf(' ') : room.length).replace(/[\s,;:—-]+$/, '')}…`;
-}
-
-const DOMAIN_IN_PARENS = /\s*\(((?:https?:\/\/)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/[^)\s]*)?)\)/i;
 const ADVISORY = /^(?:none of these|nothing (?:else )?(?:lands|this)|no events?)\b/i;
 // Where an event's name ends and what is said about it begins.
 const DELIMITERS = [' — ', ' runs ', ' meets ', ' run ', ' has ', ' is ', ' are '];
@@ -109,7 +73,8 @@ function activityCard(clause: string, label: string, week: string): IrisTaskCard
     text = text.replace(DOMAIN_IN_PARENS, '');
   }
   text = text.replace(/\(\s*\)/g, '').replace(/\s+/g, ' ').replace(/\s+([.,;:!?)])/g, '$1').replace(/[.\s]+$/, '').trim();
-  if (text.length < 4) return null;
+  // Something that has already happened is not a suggestion.
+  if (text.length < 4 || /\balready passed\b/i.test(text)) return null;
 
   const split = earliest(text, DELIMITERS, 6);
   const title = clipWords(split ? text.slice(0, split.at) : text, MAX_TITLE).trim();
@@ -130,12 +95,43 @@ function activityCard(clause: string, label: string, week: string): IrisTaskCard
   };
 }
 
-// "**Writing:** A meets on Saturday; B runs every Sunday. None of these land
-// this week." is two events; the closing remark is not one.
-function activityCards(paragraph: string, week: string): IrisTaskCard[] {
-  const labelled = paragraph.match(/^\*\*([^*]+?):?\*\*:?\s*([\s\S]*)$/);
+// A numbered or labelled entry as its card. Its day and time are worked out with the
+// entry, so it is not scheduled a second time.
+function entryCard(entry: EventEntry, label: string, week: string): IrisTaskCard {
+  return {
+    id: `${REVIEW_PREFIX}event-${slug(entry.title)}-${week}`,
+    title: entry.title,
+    detail: entry.detail,
+    source: 'iris',
+    category: categoryOf(label),
+    area: entry.area,
+    cost: entry.cost,
+    when: entry.when,
+    link: entry.link,
+    goal_id: null,
+    action: 'accept',
+  };
+}
+
+// "**Painting:** three real options. (1) **A — B** — ... (2) **C** — ..." is one card
+// per numbered entry, titled with its bold name. "**Writing:** A meets on Saturday;
+// B runs every Sunday. None of these land this week." is two events; the closing
+// remark is not one.
+function activityCards(paragraph: string, week: string, today: Date, placed: Set<string>): IrisTaskCard[] {
+  const labelled = paragraph.match(/^\*\*([^*]+?)(?::\*\*|\*\*:)\s*([\s\S]*)$/);
   const label = labelled ? labelled[1].trim() : '';
-  const body = stripInline(labelled ? labelled[2] : paragraph).replace(/\s+/g, ' ').trim();
+  const raw = labelled ? labelled[2] : paragraph;
+
+  const entries = eventEntries(raw, today) ?? (/^\*\*[^*]+\*\*\s*[—–-]/.test(raw) ? [parseEntry(raw, today)].filter((entry): entry is EventEntry => entry !== null) : null);
+  if (entries) {
+    return entries.map((entry) => {
+      const card = entryCard(entry, label, week);
+      placed.add(card.id);
+      return card;
+    });
+  }
+
+  const body = stripInline(raw).replace(/\s+/g, ' ').trim();
 
   const clauses: string[] = [];
   for (const sentence of sentencesOf(body)) {
@@ -189,7 +185,8 @@ function pickCard(item: string, week: string): IrisTaskCard | null {
     description = head(plain(`${remainder} ${led![2]}`), MAX_DESCRIPTION);
   }
   if (title.length < 4) return null;
-  const { area, cost } = extractAreaCost(description);
+  // Part of town and cost may sit past the sentences the card has room for.
+  const { area, cost } = extractAreaCost(plain(item));
   return {
     id: `${REVIEW_PREFIX}date-${slug(title)}-${week}`,
     title: clipWords(title, MAX_TITLE),
@@ -292,9 +289,18 @@ function mergeSamePlace(cards: IrisTaskCard[]): IrisTaskCard[] {
 export function reviewSuggestions(sections: IrisFeedSection[], today: Date = new Date()): IrisTaskCard[] {
   const week = weekStamp(today);
   const cards: IrisTaskCard[] = [];
+  const placed = new Set<string>();
   for (const section of sections) {
     if (/local activit/i.test(section.heading)) {
-      for (const item of itemsOf(section.content)) cards.push(...activityCards(item, week));
+      // Entries written as a name with labelled When / Where / Who / Price lines are read as
+      // they are; anything else in the section is the older paragraph wording.
+      const { found, rest } = labelledEntries(section.content, today);
+      for (const { label, entry } of found) {
+        const card = entryCard(entry, label, week);
+        placed.add(card.id);
+        cards.push(card);
+      }
+      for (const item of itemsOf(rest)) cards.push(...activityCards(item, week, today, placed));
     } else if (/date strategy/i.test(section.heading)) {
       for (const item of itemsOf(section.content)) {
         const card = pickCard(item, week);
@@ -309,5 +315,5 @@ export function reviewSuggestions(sections: IrisFeedSection[], today: Date = new
   }
   const seen = new Set<string>();
   const unique = cards.filter((card) => (seen.has(card.id) ? false : (seen.add(card.id), true)));
-  return mergeSamePlace(unique).map((card) => scheduled(card, today));
+  return mergeSamePlace(unique).map((card) => (placed.has(card.id) ? card : scheduled(card, today)));
 }

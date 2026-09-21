@@ -27,6 +27,7 @@ body,
 .app-container {
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background-image: linear-gradient(131.214deg, rgb(7, 11, 18) 3.251%, rgb(6, 40, 95) 134.11%);
   box-sizing: border-box;
@@ -42,6 +43,7 @@ body,
 .main-content {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -50,6 +52,7 @@ body,
   width: clamp(300px, 40%, 520px);
   flex-shrink: 0;
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   padding: 84px clamp(20px, 4vw, 48px) 32px;
   display: flex;
@@ -72,6 +75,7 @@ body,
 .right-section {
   flex: 1;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -126,6 +130,7 @@ body,
 /* Daily dashboard */
 .daily-dashboard {
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   padding: 84px clamp(20px, 4vw, 56px) 48px;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 76px);
@@ -1652,4 +1657,309 @@ body,
   .empty-state {
     min-height: 200px;
   }
+}
+
+/* ==========================================================================
+   Responsive: phones and small tablets
+   Below 768px the page reflows into one column and scrolls as a whole; below
+   560px the header collapses to icons so the tabs and the buttons never sit on
+   top of each other. Touch rules follow the pointer, not the width, so a tablet
+   or a narrow desktop window is treated the way its input needs.
+   ========================================================================== */
+
+/* At every width: a long unbroken word (a URL) wraps inside its bubble instead of
+   pushing the conversation into a sideways scroll. */
+.thread-message {
+  min-width: 0;
+}
+
+.thread-content {
+  overflow-wrap: anywhere;
+}
+
+/* Touch: no tap delay or grey flash, and fields big enough that iOS does not
+   zoom the page in when one is focused. */
+@media (pointer: coarse) {
+  button,
+  [role='tab'],
+  summary,
+  select {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  input:not([type='checkbox']):not([type='radio']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  .settings-close {
+    width: 40px;
+    height: 40px;
+  }
+
+  .settings-add,
+  .settings-remove,
+  .settings-secret-toggle {
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .settings-remove-key,
+  .settings-action-button {
+    min-height: 44px;
+  }
+
+  /* A bigger target than the small label looks. */
+  .left-history-clear {
+    padding: 12px 10px;
+    margin: -12px -10px;
+  }
+
+  .model-option-item {
+    min-height: 44px;
+  }
+
+  /* Goals: the whole row is the label, so the row grows; the boxes with it. */
+  .goals-item label {
+    padding: 10px 0;
+    font-size: 14px;
+  }
+
+  .goals-item input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+    margin-top: 0;
+  }
+
+  .goals-substep label {
+    padding: 9px 0;
+    font-size: 13px;
+  }
+
+  .goals-substep input[type='checkbox'] {
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+  }
+
+  .goals-breakdown-button {
+    min-height: 40px;
+    padding: 0 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  /* The page itself scrolls here, so nothing above it may be a scroll container
+     (the sticky reply box needs the page as its scroller). */
+  .app-container {
+    overflow-x: clip;
+    overflow-y: visible;
+  }
+
+  /* Content scrolls under the fixed buttons: fade it out there. The desktop
+     masks belong to full-height scrollers and would fade the page's own top. */
+  .app-container::before {
+    content: '';
+    position: fixed;
+    top: 2px;
+    left: 2px;
+    right: 2px;
+    height: calc(max(10px, env(safe-area-inset-top)) + 60px);
+    background: linear-gradient(to bottom, rgba(7, 11, 18, 0.94) 55%, rgba(7, 11, 18, 0));
+    z-index: 70;
+    pointer-events: none;
+  }
+
+  .left-section,
+  .thread-messages {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .left-section {
+    padding: calc(max(10px, env(safe-area-inset-top)) + 58px) max(20px, env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  }
+
+  .thread-messages {
+    padding: 20px max(16px, env(safe-area-inset-right)) 20px max(16px, env(safe-area-inset-left));
+    gap: 16px;
+  }
+
+  /* A conversation comes first; the new-prompt column and the history follow it. */
+  .main-content:has(.thread-message) .right-section {
+    order: -2;
+  }
+
+  .main-content:has(.thread-message) .divider {
+    order: -1;
+  }
+
+  .main-content:has(.thread-message) .thread-messages {
+    padding-top: calc(max(10px, env(safe-area-inset-top)) + 58px);
+  }
+
+  .main-content:has(.thread-message) .left-section {
+    padding-top: 24px;
+  }
+
+  /* Phones need the width, and a long unbroken word (a URL) must wrap instead of
+     pushing the bubble past the edge of the screen. */
+  .thread-message {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .thread-message-user {
+    max-width: 92%;
+  }
+
+  .thread-content {
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: 12px 14px;
+    line-height: 1.65;
+  }
+
+  /* The reply box stays in reach while a long conversation is read. */
+  .thread-input-area {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    padding: 12px max(16px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: rgba(7, 11, 18, 0.88);
+    backdrop-filter: blur(12px);
+  }
+
+  /* Panels take the width of the screen, below the buttons, and as much height
+     as is left. */
+  .settings-panel {
+    top: calc(max(10px, env(safe-area-inset-top)) + 54px);
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: calc(100vh - 76px);
+    max-height: calc(100dvh - 76px);
+  }
+
+  /* Small print, made readable (and less faint) for a phone held at arm's length. */
+  .thread-role,
+  .thread-timestamp,
+  .left-history-title,
+  .left-history-time,
+  .activity-entry-time,
+  .model-selector span,
+  .left-history-clear {
+    font-size: 11.5px;
+  }
+
+  .thread-timestamp,
+  .left-history-time {
+    color: rgba(255, 255, 255, 0.38);
+  }
+
+  /* Where the page scrolls to for the newest message: clear of the reply box. */
+  .thread-end {
+    scroll-margin-bottom: 96px;
+  }
+}
+
+@media (max-width: 560px) {
+  .tab-bar {
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
+    gap: 6px;
+  }
+
+  .tab-bar-button {
+    height: 42px;
+    padding: 0 14px;
+  }
+
+  .header-actions {
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    gap: 6px;
+  }
+
+  /* Privacy Mode keeps its purple when on; its words move to the tooltip and the
+     button's accessible name. The indexing note is a desktop nicety. */
+  .privacy-toggle {
+    width: 42px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .privacy-toggle span,
+  .index-progress {
+    display: none;
+  }
+
+  /* On Chat there are three buttons on the right; the tabs share what is left. */
+  .app-container:has(.header-actions) .tab-bar {
+    right: calc(max(10px, env(safe-area-inset-right)) + 3 * 42px + 2 * 6px + 8px);
+  }
+
+  .app-container:has(.header-actions) .tab-bar-button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 6px;
+  }
+}
+
+@media (max-width: 340px) {
+  .tab-bar-button {
+    font-size: 12px;
+    letter-spacing: 0;
+  }
+}
+
+/* ==========================================================================
+   Responsive: dialogs
+   A confirmation can carry a long note or path: the dialog scrolls instead of
+   running off a short screen, stays clear of the notch, and its buttons are
+   big enough to press.
+   ========================================================================== */
+
+.modal-overlay {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.modal-content {
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.modal-description {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .modal-content {
+    padding: 22px 20px;
+  }
+
+  .modal-title {
+    font-size: 20px;
+  }
+
+  .modal-buttons {
+    gap: 12px;
+  }
+}
+
+@media (pointer: coarse) {
+  .modal-button {
+    min-height: 44px;
+  }
+}
+
+/* Why the model picker is empty (the phone can't reach horus). */
+.model-error {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
 }

@@ -8,6 +8,9 @@ export interface DailyTask {
   note: string;
   // "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM" (local time); null when it has no day.
   when: string | null;
+  // Part of town and cost, kept from the suggestion it was made from (older tasks have none).
+  area?: string | null;
+  cost?: string | null;
 }
 
 export interface ScheduledTaskInfo {

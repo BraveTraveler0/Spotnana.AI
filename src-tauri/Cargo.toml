@@ -22,7 +22,6 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.2", features = ["tray-icon"] }
 tauri-plugin-log = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "gzip"] }
 futures-util = "0.3"
@@ -31,3 +30,12 @@ tokio = { version = "1", features = ["time"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 rss = "2"
 sysinfo = "0.39"
+
+# The auto-updater only exists on desktop.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+
+# On Android a link is opened by handing it to the phone (an intent), which is
+# what this plugin does; desktop keeps its own launcher in open_external_url.
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-opener = "2"

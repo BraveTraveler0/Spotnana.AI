@@ -530,8 +530,13 @@
 .dd-tab sup {
   margin-left: 3px;
   font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Green only while there is something on the tab you haven't looked at yet. */
+.dd-tab sup.dd-new {
   color: var(--lime);
-  opacity: 0.85;
+  text-shadow: 0 0 8px rgba(214, 254, 129, 0.55);
 }
 
 .dd-task-list {
@@ -929,6 +934,40 @@
   font-style: normal;
   font-size: 11px;
   color: var(--text-3);
+}
+
+/* Suggestions with no date yet: a quiet section under the dated ones. */
+.dd-leads {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.dd-leads summary {
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  list-style: none;
+  transition: color 0.2s;
+}
+
+.dd-leads summary::-webkit-details-marker {
+  display: none;
+}
+
+.dd-leads summary:hover {
+  color: var(--lime);
+}
+
+.dd-leads-note {
+  margin: 10px 0 4px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.dd-leads-list {
+  margin-top: 18px;
 }
 
 /* ---- Middle: greeting, quote, story ----------------------------------------------- */
@@ -2443,4 +2482,200 @@
   to {
     opacity: 0.2;
   }
+}
+
+/* ---- Phones (≤430px): tighten the dashboard so it breathes at 390px -------- */
+
+@media (max-width: 430px) {
+  .dd-root {
+    /* Reduce the double-padding at phone widths. */
+    padding: 76px max(16px, env(safe-area-inset-right)) calc(64px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+
+  .dd-col {
+    gap: 32px;
+  }
+
+  /* Date + weather side-by-side is tight; let them wrap to two rows. */
+  .dd-hero {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  /* Narrower gaps between tabs at 390px so "Suggested" doesn't clip. */
+  .dd-tabs {
+    gap: 20px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dd-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Give cards a little less side-padding to reclaim width. */
+  .dd-task,
+  .dd-task.dd-iris-card {
+    padding: 14px 14px;
+  }
+
+  /* KPIs: 2-across is more readable than 3 at 390px. */
+  .dd-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---- Touch and small screens ---------------------------------------------------------------- */
+
+/* Touch has no hover, so the trash on a task is always there instead of appearing on hover. */
+@media (hover: none) {
+  .dd-task-remove {
+    opacity: 0.7;
+  }
+}
+
+/* A finger is about 44px wide. The small circles and icons keep the size they
+   look right at; their tappable area grows around them with an invisible
+   halo. Where two sit close (the + and the x on a suggestion) the halos are
+   kept small enough not to overlap. */
+@media (pointer: coarse) {
+  .dd-check::before {
+    inset: -14px;
+  }
+
+  .dd-suggest-add::before,
+  .dd-task-dismiss::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+
+  .dd-task-dismiss {
+    top: 24px;
+  }
+
+  .dd-task-remove,
+  .dd-post-dismiss,
+  .dd-hide {
+    position: relative;
+  }
+
+  .dd-task-remove::before,
+  .dd-post-dismiss::before,
+  .dd-hide::before {
+    content: '';
+    position: absolute;
+    inset: -10px;
+  }
+
+  .dd-tab {
+    padding: 13px 8px;
+    margin: 0 -8px;
+  }
+
+  .dd-tab.active::after {
+    left: 8px;
+    right: 8px;
+  }
+
+  .dd-tabs {
+    margin-top: 12px;
+  }
+
+  /* A card's title is a one-line link; give it a taller target. */
+  .dd-task-titlelink {
+    padding: 6px 0;
+    margin: -6px 0;
+  }
+
+  .dd-add {
+    width: 44px;
+    height: 44px;
+  }
+
+  .dd-add-prompt {
+    padding: 13px 0;
+  }
+
+  .dd-drop,
+  .dd-pill,
+  .dd-post-action,
+  .dd-newtask-save {
+    min-height: 40px;
+  }
+
+  .dd-link {
+    padding: 12px 0;
+    margin: -10px 0;
+  }
+
+  .dd-newtask-title,
+  .dd-newtask-field,
+  .cac-input {
+    min-height: 44px;
+  }
+
+  .dd-icon-button {
+    position: relative;
+  }
+
+  .dd-icon-button::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+
+  .dd-goal-label {
+    min-height: 44px;
+  }
+
+  .dd-scheduled summary {
+    padding: 12px 0;
+  }
+
+  .dd-menu {
+    max-height: min(320px, 55vh);
+  }
+
+  .dd-menu li {
+    padding: 12px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 720px) {
+  /* Keep the dashboard clear of the notch and the home bar. */
+  .daily-dashboard {
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-bottom: calc(48px + env(safe-area-inset-bottom));
+  }
+
+  .dd-menu {
+    max-width: calc(100vw - 32px);
+  }
+
+  /* Small print, made readable. */
+  .dd-task-source,
+  .dd-tab sup,
+  .dd-goal-card em,
+  .dd-source,
+  .dd-source i,
+  .dd-ring-sub,
+  .dd-chart-kicker,
+  .dd-spark-label {
+    font-size: 11px;
+  }
+}
+
+/* The phone's note about Iris's feed: setup, or "off Tailscale, showing the last copy". */
+.dd-sync-note {
+  margin: 10px 0 0;
+  color: var(--text-2);
+}
+
+.dd-sync-note .dd-link {
+  display: inline;
+  padding: 0;
 }

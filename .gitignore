@@ -28,3 +28,9 @@ Thumbs.db
 iris-feed/*.md
 iris-feed/*.json
 !iris-feed/README.md
+
+# Android signing keys and local build settings never belong in the repo
+*.jks
+*.keystore
+keystore.properties
+src-tauri/gen/android/local.properties

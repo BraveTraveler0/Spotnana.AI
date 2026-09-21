@@ -1,10 +1,14 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { Check, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { agendaFor, agendaForTask, dayLabel, groupByDay, localDay, type Agenda } from './agenda';
+import { areaFor, costFor } from './place';
 import { cardKey, type FinishedEntry } from './finished';
 import NewTaskForm, { type NewTask } from './NewTaskForm';
 import type { DailyTask, IrisTaskCard, ScheduledTaskInfo } from './types';
 import type { ScoutState } from './useIrisCards';
+import { REVIEW_PREFIX } from './reviewSuggestions';
+import { hasDateRange, isEvergreen } from './whenParser';
+import { useFreshTabs } from './useSeenItems';
 
 interface IrisSuggestion {
   text: string;
@@ -50,13 +54,33 @@ const SOURCE_LABELS: Record<string, string> = {
 
 // Returns AREA · COST · CATEGORY pieces (all-caps, empty pieces dropped).
 function areaCostCategory(card: IrisTaskCard): string {
-  // Area lives on the time line now; the meta keeps cost + category.
+  // Area lives on the time line now; the meta keeps cost + category (derived when fields are null).
   return [
-    card.cost?.trim().toUpperCase(),
+    derivedCost(card)?.toUpperCase(),
     card.category && card.category !== 'other' ? card.category.toUpperCase() : '',
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+// Area/cost may be missing on older cards — derive from the text at render time.
+// What Iris wrote on the card, else what its wording says (place.ts).
+function derivedArea(card: { id?: string; title: string; detail: string; area?: string | null }): string | null {
+  // A card made from the review carries the part of town its own Where line gave, or none:
+  // a place name is never picked out of its prose (Iris's brief, Bug 3).
+  if (card.id?.startsWith(REVIEW_PREFIX)) return card.area?.trim() || null;
+  return areaFor(card);
+}
+function derivedCost(card: { title: string; detail: string; cost?: string | null }): string | null {
+  return costFor(card);
+}
+
+// "Iris" is dead as a label (TASKS-CONTRACT.md): everything here comes from her.
+// "Iris insight" reads as just "Insight"; any other source is shown as it is.
+function sourceLabel(source: string | undefined): string | null {
+  const text = (source ?? '').trim();
+  if (!text || /^iris$/i.test(text)) return null;
+  return text.replace(/^iris\s+/i, '');
 }
 
 function cardMeta(card: IrisTaskCard): string {
@@ -70,12 +94,19 @@ function cardMeta(card: IrisTaskCard): string {
   return [label, detail].filter(Boolean).join(' · ');
 }
 
-// Truncate to the first sentence (ends at .!?); appends … only when there is more.
+// Clip a conversational "why" to its first real sentence. A short opener ("The top
+// pick.") is kept together with the sentence after it, so the card never ends up
+// saying only that. Adds … only when more follows.
 function firstSentence(text: string): string {
-  const match = text.match(/^[^.!?]*[.!?]/);
-  if (!match) return text;
-  const first = match[0].trim();
-  return text.trim() === first ? text : `${first}…`;
+  const trimmed = text.trim();
+  let end = 0;
+  for (const match of trimmed.matchAll(/[^.!?]*[.!?]+(?:\s+|$)/g)) {
+    end = (match.index ?? 0) + match[0].length;
+    if (end >= 40) break;
+  }
+  if (end === 0) return text;
+  const head = trimmed.slice(0, end).trim();
+  return head.length >= trimmed.length ? text : `${head}…`;
 }
 
 // "Today · 12:31 PM", "Saturday · 4:05 PM": when a card was checked off.
@@ -104,8 +135,11 @@ interface CardProps {
 
 function IrisCard({ card, agenda, suggested, pending, busy, onAccept, onDismiss, onComplete, onOpenLink }: CardProps) {
   // For suggested cards that carry area/cost, clip the conversational 'why' to one sentence.
+  // A description of short " · " facts (venue, host, ...) is already brief and stays whole.
   const displayDescription =
-    suggested && (card.area || card.cost) && agenda.description ? firstSentence(agenda.description) : agenda.description;
+    suggested && (card.area || card.cost) && agenda.description && !agenda.description.includes(' · ')
+      ? firstSentence(agenda.description)
+      : agenda.description;
   return (
     <li className={`dd-task dd-iris-card ${suggested ? 'dd-suggestion dd-has-dismiss' : ''}`}>
       {onComplete && (
@@ -118,10 +152,9 @@ function IrisCard({ card, agenda, suggested, pending, busy, onAccept, onDismiss,
         />
       )}
       <div className="dd-task-main">
-        {agenda.time && (
+        {(agenda.time || derivedArea(card)) && (
           <span className="dd-task-time">
-            {agenda.time}
-            {card.area?.trim() ? ` · ${card.area.trim()}` : ''}
+            {[agenda.time, derivedArea(card)].filter(Boolean).join(' · ')}
           </span>
         )}
         {card.link ? (
@@ -215,6 +248,11 @@ export default function TasksPanel({
   const nextCount = nextCards.length + pendingCards.length + open.length;
   const suggestedCount = suggestedCards.length + (irisSuggestion ? 1 : 0);
   const doneCount = done.length + finishedCards.length;
+  // The count on Next and Suggested is green only while something on it is new to you.
+  const fresh = useFreshTabs(tab, {
+    next: [...nextCards.map(cardKey), ...pendingCards.map(cardKey), ...open.map((task) => task.id)],
+    suggested: [...suggestedCards.map(cardKey), ...(irisSuggestion ? [`suggestion::${irisSuggestion.text}`] : [])],
+  });
 
   const create = (task: NewTask) => {
     setCreating(false);
@@ -222,9 +260,9 @@ export default function TasksPanel({
     onAdd(task);
   };
 
-  const tabs: { id: Tab; label: string; count: number }[] = [
-    { id: 'next', label: 'Next', count: nextCount },
-    { id: 'suggested', label: 'Suggested', count: suggestedCount },
+  const tabs: { id: Tab; label: string; count: number; fresh?: boolean }[] = [
+    { id: 'next', label: 'Next', count: nextCount, fresh: fresh.next },
+    { id: 'suggested', label: 'Suggested', count: suggestedCount, fresh: fresh.suggested },
     { id: 'done', label: 'Done', count: doneCount },
   ];
 
@@ -246,6 +284,12 @@ export default function TasksPanel({
   // Laid out like Iris's cards (dd-iris-card), so every check circle in the list lines up.
   const renderTask = (task: DailyTask) => {
     const agenda = agendaForTask(task);
+    // Part of town and cost: kept on the task if it was made from a card that had them,
+    // else read from what it says. Same rule as the cards above.
+    const area = areaFor(task);
+    const cost = costFor(task);
+    const timeLine = [agenda.time, area].filter(Boolean).join(' · ');
+    const meta = [cost?.toUpperCase(), sourceLabel(task.source)].filter(Boolean).join(' · ') || null;
     return (
       <li key={task.id} className={`dd-task dd-iris-card ${task.done ? 'done' : ''}`}>
         <button
@@ -258,10 +302,10 @@ export default function TasksPanel({
           {task.done && <Check size={11} strokeWidth={3} />}
         </button>
         <div className="dd-task-main">
-          {agenda.time && <span className="dd-task-time">{agenda.time}</span>}
+          {timeLine && <span className="dd-task-time">{timeLine}</span>}
           <span className="dd-task-title">{task.label}</span>
           {agenda.description && <span className="dd-task-detail">{agenda.description}</span>}
-          {task.source && <span className="dd-task-source">{task.source}</span>}
+          {meta && <span className="dd-task-source">{meta}</span>}
         </div>
         <button type="button" className="dd-task-remove" onClick={() => onRemove(task.id)} aria-label="Remove task" title="Remove task">
           <Trash2 size={13} />
@@ -302,7 +346,14 @@ export default function TasksPanel({
     ...pendingCards.map((card) => cardEntry(card, { pending: true })),
     ...open.map((task) => ({ key: task.id, agenda: agendaForTask(task), node: renderTask(task) })),
   ];
-  const suggestedEntries = suggestedCards.map((card) => cardEntry(card, { suggested: true }));
+  // A suggestion with no day that is not a weekly routine, an ongoing thing or a run
+  // with dates ("Sep 15–Nov 10") is a lead: Iris pointed at it ("check for the next
+  // date") but has no date for it. It waits under "No date yet" instead of posing as
+  // something for any day.
+  const isLead = (card: IrisTaskCard) =>
+    agendaFor(card).day === null && !card.goal_id && !card.id.includes('-track-') && !isEvergreen(`${card.title}. ${card.detail}`) && !hasDateRange(`${card.title}. ${card.detail}`);
+  const suggestedEntries = suggestedCards.filter((card) => !isLead(card)).map((card) => cardEntry(card, { suggested: true }));
+  const leadEntries = suggestedCards.filter(isLead).map((card) => cardEntry(card, { suggested: true }));
 
   return (
     <>
@@ -322,7 +373,11 @@ export default function TasksPanel({
           {tabs.map((entry) => (
             <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={`dd-tab ${tab === entry.id ? 'active' : ''}`} onClick={() => setTab(entry.id)}>
               {entry.label}
-              {entry.count > 0 && <sup>{entry.count}</sup>}
+              {entry.count > 0 && (
+                <sup className={entry.fresh ? 'dd-new' : undefined} title={entry.fresh ? 'Something new' : undefined}>
+                  {entry.count}
+                </sup>
+              )}
             </button>
           ))}
         </div>
@@ -368,6 +423,27 @@ export default function TasksPanel({
                 </li>
               )}
               <AgendaItems entries={suggestedEntries} />
+              {leadEntries.length > 0 && (
+                <li className="dd-leads">
+                  <details>
+                    <summary>No date yet · {leadEntries.length}</summary>
+                    <p className="dd-leads-note">Iris pointed at these but has no date for them. Ask her to find one, and any she dates move up into their day.</p>
+                    {scout.state === 'asked' ? (
+                      <p className="dd-scout-note">Asked Iris. Dated ones show up here when she&rsquo;s done.</p>
+                    ) : (
+                      <button type="button" className="dd-link" onClick={onAskScout} disabled={scout.state === 'sending'}>
+                        {scout.state === 'sending' ? 'Asking Iris…' : 'Ask Iris to find dates'}
+                      </button>
+                    )}
+                    {scout.error && <p className="dd-scout-note dd-scout-error">{scout.error}</p>}
+                    <ul className="dd-task-list dd-leads-list">
+                      {leadEntries.map((entry) => (
+                        <Fragment key={entry.key}>{entry.node}</Fragment>
+                      ))}
+                    </ul>
+                  </details>
+                </li>
+              )}
               {suggestedCount === 0 && (
                 <li className="dd-empty-line">
                   <p>No suggestions right now. Iris scouts local events every Monday morning.</p>

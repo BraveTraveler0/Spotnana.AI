@@ -15,13 +15,14 @@
         "title": "Artemis AI",
         "width": 1280,
         "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
+        "minWidth": 360,
+        "minHeight": 480,
         "resizable": true,
         "fullscreen": false,
         "center": true,
         "decorations": true,
-        "transparent": false
+        "transparent": false,
+        "backgroundColor": "#070b12"
       }
     ],
     "security": {

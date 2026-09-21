@@ -57,11 +57,11 @@ export default function InsightFeed({ posts, updated, isAdded, onAddTask, onDism
             return (
               <li className="dd-post" key={post.id}>
                 <span className={`dd-avatar dd-avatar-${post.author.toLowerCase()}`} aria-hidden>
-                  {post.author === 'Iris' ? <Sparkles size={15} /> : <BarChart3 size={15} />}
+                  {post.author.toLowerCase() === 'iris' ? <Sparkles size={15} /> : <BarChart3 size={15} />}
                 </span>
                 <div className="dd-post-body">
                   <div className="dd-post-head">
-                    <strong>{post.author}</strong>
+                    {post.author.toLowerCase() !== 'iris' && <strong>{post.author}</strong>}
                     <span className="dd-post-time">{stamp}</span>
                     <span className={`dd-kind dd-kind-${post.kind}`}>{KIND_LABEL[post.kind]}</span>
                     <button type="button" className="dd-post-dismiss" onClick={() => onDismiss(post)} aria-label="Dismiss this insight" title="Dismiss">

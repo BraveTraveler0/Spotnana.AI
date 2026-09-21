@@ -8,7 +8,9 @@
     "dev": "vite",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "inana:token": "node scripts/inana-token.mjs",
+    "android:apk": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android.ps1"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

@@ -33,8 +33,8 @@ interface PanelProps {
 
 // What to show in place of numbers/charts when there's nothing to draw yet.
 function stateMessage(status: InanaStatus, data: InanaData | null): { text: string; action: 'connect' | 'retry' | 'open' | null; label: string } | null {
-  if (status === 'idle') return { text: 'Connect Inana to see live spend, revenue and traffic here.', action: 'connect', label: 'Connect Inana' };
-  if (status === 'expired') return { text: 'Your Inana session has expired.', action: 'connect', label: 'Sign in again' };
+  if (status === 'idle') return { text: "Inana isn't linked on this PC yet, so its spend, revenue and traffic can't show here.", action: 'connect', label: 'How to link it' };
+  if (status === 'expired') return { text: "Artemis's access to Inana has run out.", action: 'connect', label: 'How to renew it' };
   if (status === 'error') return { text: "Couldn't reach Inana.", action: 'retry', label: 'Try again' };
   if (status === 'ready' && data && data.meta.length === 0 && !data.stripe) {
     return { text: "Inana is connected, but no ad account or Stripe is linked yet — link one inside Inana and it'll show up here.", action: 'open', label: 'Open Inana' };

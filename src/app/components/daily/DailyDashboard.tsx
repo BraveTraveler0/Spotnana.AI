@@ -18,6 +18,7 @@ import { cardKey, useFinishedCards, useHandledCards, useScoutRequest } from './u
 import { useHandledPosts, postKey } from './useHandledPosts';
 import { useHiddenTopics } from './useHiddenTopics';
 import { useInana } from './useInana';
+import { isAndroid, usePhoneFeed } from './usePhoneFeed';
 import WeatherGlyph from './WeatherGlyph';
 import type { DailyTask, GoalSection, GoalSubStep, IrisFeedContent, IrisTaskCard, LocationInfo, NewsItem, ScheduledTaskInfo, WeatherInfo, WeeklyGoals } from './types';
 import './daily.css';
@@ -180,7 +181,12 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   const middleRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
 
-  const inana = useInana(isTauri && active, inanaVersion);
+  // MarketGenius runs on the PC, so on a phone there is nothing to ask and no Inana panels.
+  const inana = useInana(isTauri && active && !isAndroid, inanaVersion);
+  // On the phone the feed is a copy brought over Tailscale; a new copy re-reads it at once.
+  const [feedVersion, setFeedVersion] = useState(0);
+  const reloadFeed = useCallback(() => setFeedVersion((version) => version + 1), []);
+  const phoneFeed = usePhoneFeed(isTauri && active, reloadFeed);
   const loadedAt = useRef({ weather: 0, news: 0, trailers: 0 });
   const isStale = (key: 'weather' | 'news' | 'trailers') => Date.now() - loadedAt.current[key] > FEED_STALE_MS;
 
@@ -271,7 +277,7 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     fetchFeed();
     const interval = setInterval(fetchFeed, 60000);
     return () => clearInterval(interval);
-  }, [isTauri, active]);
+  }, [isTauri, active, feedVersion]);
 
   useEffect(() => {
     try {
@@ -296,9 +302,9 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
 
   // ---- Tasks ----------------------------------------------------------------
 
-  const addTask = async ({ label, source, note, when }: { label: string; source?: string; note?: string; when?: string | null }) => {
+  const addTask = async ({ label, source, note, when, area, cost }: { label: string; source?: string; note?: string; when?: string | null; area?: string | null; cost?: string | null }) => {
     try {
-      const task = await invoke<DailyTask>('add_todo', { label, source: source ?? null, note: note ?? null, when: when ?? null });
+      const task = await invoke<DailyTask>('add_todo', { label, source: source ?? null, note: note ?? null, when: when ?? null, area: area ?? null, cost: cost ?? null });
       setTasks((previous) => [...previous, task]);
       return true;
     } catch (err) {
@@ -418,7 +424,7 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
       // Iris has never heard of these ids, so there is nothing to tell her:
       // taking one on just puts it on your own list, on the day and time the
       // review's wording gave it (none for a weekly lesson: that waits under Anytime).
-      await addTask({ label: card.title, note: card.detail, source: 'Iris', when: card.when });
+      await addTask({ label: card.title, note: card.detail, source: 'Iris', when: card.when, area: card.area, cost: card.cost });
       dismissCard(card);
       return;
     }
@@ -449,6 +455,8 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     if (!card.goal_id) return;
     try {
       await invoke('record_checkoff', { goalId: card.goal_id });
+      // On the phone the line waits in a queue until it can go to Iris over Tailscale; try now.
+      void phoneFeed.sync(true);
     } catch (err) {
       setCardNotice(`Checked off here, but Iris wasn't told: ${String(err)}`);
     }
@@ -640,6 +648,19 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
                 <LocationPicker label={weather?.location ?? location?.label ?? 'Set location'} onChanged={loadWeather} />
               </div>
             </div>
+            {phoneFeed.note && (
+              <p className="dd-fine dd-sync-note" role="status">
+                {phoneFeed.note}
+                {phoneFeed.needsSettings && (
+                  <>
+                    {' '}
+                    <button type="button" className="dd-link" onClick={onOpenSettings}>
+                      Open Settings
+                    </button>
+                  </>
+                )}
+              </p>
+            )}
           </Reveal>
 
           <Reveal delay={0.1}>
@@ -685,9 +706,11 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
             <GoalsWidget sections={goals} weekly={weekly} error={goalsError} loaded={goalsLoaded} breakingDown={breakingDown} onToggle={toggleGoal} onBreakDown={breakDownGoal} onOpenGoals={onOpenGoals} onStartSession={onStartGoalSession} />
           </Reveal>
 
-          <Reveal delay={0.28}>
-            <InanaInsight {...inanaProps} refreshing={inana.refreshing} onScopeChange={setScope} onRefresh={inana.refresh} />
-          </Reveal>
+          {!isAndroid && (
+            <Reveal delay={0.28}>
+              <InanaInsight {...inanaProps} refreshing={inana.refreshing} onScopeChange={setScope} onRefresh={inana.refresh} />
+            </Reveal>
+          )}
 
           {allPosts.length > 0 && (
             <Reveal delay={0.32}>
@@ -706,9 +729,11 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
 
         {/* ---- Right: Inana's headline numbers, then news in varied categories and styles ---- */}
         <div className="dd-col dd-col-right" ref={rightRef}>
-          <Reveal delay={0.06} className="dd-kpi-wrap">
-            <InanaKpis {...inanaProps} />
-          </Reveal>
+          {!isAndroid && (
+            <Reveal delay={0.06} className="dd-kpi-wrap">
+              <InanaKpis {...inanaProps} />
+            </Reveal>
+          )}
 
           <div className="dd-right-body">
             {news === null && !newsError && <div className="dd-feature dd-skeleton" aria-hidden />}

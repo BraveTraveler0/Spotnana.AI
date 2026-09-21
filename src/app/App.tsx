@@ -8,6 +8,7 @@ import DailyDashboard from './components/daily/DailyDashboard';
 import CityAutocomplete, { geocodeLabel } from './components/daily/CityAutocomplete';
 import type { GeocodeResult } from './components/daily/types';
 import type { InanaConfig } from './components/daily/useInana';
+import { GATEWAY_SAVED_EVENT } from './components/daily/usePhoneFeed';
 import './App.css';
 
 interface Message {
@@ -160,11 +161,16 @@ const NUM_PREDICT = 1536;
 const SYSTEM_PROMPT = "You are Artemis, a playful, female-voiced young hacker persona. Speak with wit, curiosity, confidence, and a light teasing edge. Provide lunar intelligence for strategy, research, and problem-solving while keeping the voice vivid, clever, and a little mischievous. You have persistent tools available when relevant: a to-do list, long-term memory about the user (use remember_fact whenever they share something durable worth keeping, not only when explicitly asked to remember), procedures they've taught you (save_skill/get_skill), tracked web pages that alert to changes, local system diagnostics, their weekly goals and yearly goals (list_weekly_goals to see progress; update_goals to add, remove, change or log one, which hands it to their Hermes agent, Iris, who owns those files — never edit them yourself), and — only once the user has connected them in Settings — Home Assistant device control and GitHub. If one of those isn't connected yet, say so plainly rather than pretending to have done something. Use tools naturally as part of being genuinely useful, not just on command, but never claim an action succeeded that a tool reported as failed or declined.";
 const LOCAL_MODEL = import.meta.env.VITE_OLLAMA_MODEL || 'dolphin-mistral:7b';
 const OLLAMA_BASE = import.meta.env.DEV ? '/api/ollama' : 'http://localhost:11434';
-const DEFAULT_KNOWLEDGE_PATHS = [
-  "C:\\Users\\dccar\\OneDrive\\Documents\\Ma'at",
-  "C:\\Ma'at",
-  'C:\\Users\\dccar\\OneDrive\\Desktop\\Audiobooks',
-];
+// The phone has no folders like these (and no way to read them): it starts with none.
+const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+// C:\Ma'at is the live vault; the OneDrive copy is the old one.
+const DEFAULT_KNOWLEDGE_PATHS = isAndroid
+  ? []
+  : [
+      "C:\\Ma'at",
+      "C:\\Users\\dccar\\OneDrive\\Documents\\Ma'at",
+      'C:\\Users\\dccar\\OneDrive\\Desktop\\Audiobooks',
+    ];
 const KNOWLEDGE_PATHS_STORAGE_KEY = 'artemis-knowledge-paths';
 const isTauriRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -249,6 +255,8 @@ export default function App() {
   const [toolStatus, setToolStatus] = useState<{ tool: string; status: string } | null>(null);
   const [error, setError] = useState('');
   const [modelOptions, setModelOptions] = useState<string[]>([LOCAL_MODEL]);
+  // Why the picker is empty (the phone can't reach horus), shown under it instead of leaving it blank.
+  const [modelsError, setModelsError] = useState('');
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('artemis-selected-model') || LOCAL_MODEL);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [knowledgePaths, setKnowledgePaths] = useState<string[]>(() => getStoredKnowledgePaths());
@@ -284,8 +292,10 @@ export default function App() {
   const [hasGithubToken, setHasGithubToken] = useState(false);
   const [githubTokenInput, setGithubTokenInput] = useState('');
   const [hasHermesGateway, setHasHermesGateway] = useState(false);
-  const [hermesGatewayUrlInput, setHermesGatewayUrlInput] = useState('http://127.0.0.1:8642');
+  // On the phone the gateway is the one on your Tailscale network; 127.0.0.1 would be the phone itself.
+  const [hermesGatewayUrlInput, setHermesGatewayUrlInput] = useState(isAndroid ? '' : 'http://127.0.0.1:8642');
   const [hermesGatewayKeyInput, setHermesGatewayKeyInput] = useState('');
+  const [hermesGatewayError, setHermesGatewayError] = useState('');
   const [remoteOllamaConfig, setRemoteOllamaConfig] = useState<{ label: string; base_url: string } | null>(null);
   const [remoteOllamaLabelInput, setRemoteOllamaLabelInput] = useState('');
   const [remoteOllamaUrlInput, setRemoteOllamaUrlInput] = useState('http://100.x.x.x:11434');
@@ -294,13 +304,7 @@ export default function App() {
   // weather, headlines and charts aren't refetched on every tab switch.
   const [dailyVisited, setDailyVisited] = useState(false);
   const [inanaConfig, setInanaConfig] = useState<InanaConfig | null>(null);
-  const [inanaApiUrlInput, setInanaApiUrlInput] = useState('http://localhost:8080');
-  const [inanaWebUrlInput, setInanaWebUrlInput] = useState('http://localhost:5173');
-  const [inanaEmailInput, setInanaEmailInput] = useState('');
-  const [inanaPasswordInput, setInanaPasswordInput] = useState('');
-  const [inanaError, setInanaError] = useState('');
-  const [inanaConnecting, setInanaConnecting] = useState(false);
-  // Bumped whenever Inana is connected or disconnected so the dashboard refreshes at once.
+  // Bumped whenever Inana is disconnected so the dashboard refreshes at once.
   const [inanaVersion, setInanaVersion] = useState(0);
   // Same idea for the saved weather location.
   const [locationVersion, setLocationVersion] = useState(0);
@@ -330,6 +334,7 @@ export default function App() {
   }, []);
 
   const loadModels = async () => {
+    setModelsError('');
     try {
       const models = isTauriRuntime
         ? await invoke<string[]>('get_ollama_models')
@@ -350,6 +355,7 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
+      if (isAndroid) setModelsError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -434,30 +440,6 @@ export default function App() {
 
   const applyInanaConfig = (config: InanaConfig) => {
     setInanaConfig(config);
-    setInanaApiUrlInput(config.api_url);
-    setInanaWebUrlInput(config.web_url);
-    setInanaEmailInput(config.email);
-  };
-
-  const connectInana = async () => {
-    if (inanaConnecting) return;
-    setInanaError('');
-    setInanaConnecting(true);
-    try {
-      const config = await invoke<InanaConfig>('connect_inana', {
-        apiUrl: inanaApiUrlInput,
-        webUrl: inanaWebUrlInput,
-        email: inanaEmailInput,
-        password: inanaPasswordInput,
-      });
-      applyInanaConfig(config);
-      setInanaPasswordInput('');
-      setInanaVersion((version) => version + 1);
-    } catch (err) {
-      setInanaError(String(err));
-    } finally {
-      setInanaConnecting(false);
-    }
   };
 
   const disconnectInana = async () => {
@@ -472,12 +454,16 @@ export default function App() {
 
   const saveHermesGatewayConfig = async () => {
     if (!hermesGatewayUrlInput.trim() || !hermesGatewayKeyInput.trim()) return;
+    setHermesGatewayError('');
     try {
       await invoke('set_hermes_gateway_config', { baseUrl: hermesGatewayUrlInput.trim(), key: hermesGatewayKeyInput.trim() });
       setHermesGatewayKeyInput('');
       setHasHermesGateway(true);
+      // The phone's copy of Iris's feed follows the connection at once.
+      window.dispatchEvent(new Event(GATEWAY_SAVED_EVENT));
     } catch (err) {
       console.error(err);
+      setHermesGatewayError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -788,7 +774,9 @@ export default function App() {
 
   // Auto-scroll to latest message
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // 'end', not 'start': on a phone the page itself scrolls, and 'start' would put
+    // the newest message above the top of the screen.
+    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [currentThread, isLoading]);
 
   const callLocalAI = async (
@@ -1299,6 +1287,8 @@ export default function App() {
               <ChevronDown size={16} className={`model-chevron ${isModelMenuOpen ? 'open' : ''}`} />
             </button>
 
+            {modelsError && <p className="daily-error model-error">{modelsError}</p>}
+
             {isModelMenuOpen && (
               <div className="model-options-menu" role="listbox" aria-label="Model options">
                 {modelOptions.map((model) => {
@@ -1436,7 +1426,7 @@ export default function App() {
           {isSettingsOpen && (
             <div className="settings-panel" role="dialog" aria-label="Knowledge paths settings">
               <div className="settings-header">
-                <h3>Knowledge Paths</h3>
+                <h3>{isAndroid ? 'Settings' : 'Knowledge Paths'}</h3>
                 <button
                   className="settings-close"
                   onClick={() => setIsSettingsOpen(false)}
@@ -1446,6 +1436,8 @@ export default function App() {
                 </button>
               </div>
 
+              {!isAndroid && (
+                <>
               <p className="settings-help">Artemis scans these folders for context before responding.</p>
 
               <div className="settings-paths">
@@ -1521,6 +1513,9 @@ export default function App() {
                     <Plus size={15} />
                   </button>
                 </div>
+              )}
+
+                </>
               )}
 
               <div className="settings-section-divider" />
@@ -1623,64 +1618,22 @@ export default function App() {
                 </div>
               )}
 
-              <div className="settings-section-divider" />
-
-              <h3>Inana</h3>
-              <p className="settings-help">
-                {inanaConfig?.connected
-                  ? `Connected as ${inanaConfig.email}. Live spend, revenue and traffic show on the Daily tab.`
-                  : 'Sign in to your MarketGenius (Inana) account to show live numbers and charts on the Daily tab. Your password is used once to sign in and is never saved — only the session token is.'}
-              </p>
-              {inanaConfig?.connected ? (
-                <button className="settings-remove-key" onClick={disconnectInana}>
-                  Sign out of Inana
-                </button>
-              ) : (
+              {/* MarketGenius runs on the PC, so there is nothing for a phone to link to. */}
+              {!isAndroid && (
                 <>
-                  <div className="settings-add-row">
-                    <input
-                      value={inanaApiUrlInput}
-                      onChange={(e) => setInanaApiUrlInput(e.target.value)}
-                      className="settings-path-input"
-                      placeholder="Inana API URL, e.g. http://localhost:8080"
-                    />
-                  </div>
-                  <div className="settings-add-row">
-                    <input
-                      value={inanaWebUrlInput}
-                      onChange={(e) => setInanaWebUrlInput(e.target.value)}
-                      className="settings-path-input"
-                      placeholder="Inana app URL, e.g. http://localhost:5173"
-                    />
-                  </div>
-                  <div className="settings-add-row">
-                    <input
-                      type="email"
-                      value={inanaEmailInput}
-                      onChange={(e) => setInanaEmailInput(e.target.value)}
-                      className="settings-path-input"
-                      placeholder="Email"
-                    />
-                  </div>
-                  <div className="settings-add-row">
-                    <input
-                      type="password"
-                      value={inanaPasswordInput}
-                      onChange={(e) => setInanaPasswordInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          connectInana();
-                        }
-                      }}
-                      className="settings-path-input"
-                      placeholder="Password"
-                    />
-                    <button className="settings-add" onClick={connectInana} disabled={inanaConnecting} aria-label="Sign in to Inana" title="Sign in">
-                      <Plus size={15} />
+                  <div className="settings-section-divider" />
+
+                  <h3>Inana</h3>
+                  <p className="settings-help">
+                    {inanaConfig?.connected
+                      ? `Linked to MarketGenius at ${inanaConfig.api_url}. There is no login: Artemis has its own access token, so spend, revenue and traffic show on the Daily tab whenever MarketGenius is running.`
+                      : 'Not linked yet. There is no login or password: run "npm run inana:token" once in the Artemis folder and Artemis gets its own access token for your MarketGenius account. The same command renews it if it ever runs out.'}
+                  </p>
+                  {inanaConfig?.connected && (
+                    <button className="settings-remove-key" onClick={disconnectInana}>
+                      Forget the access token
                     </button>
-                  </div>
-                  {inanaError && <p className="daily-error">{inanaError}</p>}
+                  )}
                 </>
               )}
 
@@ -1688,9 +1641,13 @@ export default function App() {
 
               <h3>Hermes Gateway</h3>
               <p className="settings-help">
-                {hasHermesGateway
-                  ? 'Connected. Artemis can start durable, steerable Hermes runs.'
-                  : "For durable/background Hermes runs (vs. a one-shot call). Enable gateway.api_server in Hermes's own config and run `hermes gateway`, then paste its URL and key here."}
+                {isAndroid
+                  ? hasHermesGateway
+                    ? "Connected. Iris's daily feed and your check-offs sync over Tailscale."
+                    : "Iris reaches this phone through her gateway, over Tailscale. Paste the gateway's address on your tailnet (100.x.x.x, or a name ending in .ts.net) and its key: the same key as on your computer."
+                  : hasHermesGateway
+                    ? 'Connected. Artemis can start durable, steerable Hermes runs.'
+                    : "For durable/background Hermes runs (vs. a one-shot call). Enable gateway.api_server in Hermes's own config and run `hermes gateway`, then paste its URL and key here."}
               </p>
               {hasHermesGateway ? (
                 <button className="settings-remove-key" onClick={clearHermesGatewayConfig}>
@@ -1703,7 +1660,10 @@ export default function App() {
                       value={hermesGatewayUrlInput}
                       onChange={(e) => setHermesGatewayUrlInput(e.target.value)}
                       className="settings-path-input"
-                      placeholder="http://127.0.0.1:8642"
+                      placeholder={isAndroid ? 'http://100.x.x.x:8642' : 'http://127.0.0.1:8642'}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                     />
                   </div>
                   <div className="settings-add-row">
@@ -1718,6 +1678,7 @@ export default function App() {
                       <Plus size={15} />
                     </button>
                   </div>
+                  {hermesGatewayError && <p className="daily-error">{hermesGatewayError}</p>}
                 </>
               )}
 
@@ -1838,7 +1799,7 @@ export default function App() {
                   </div>
                 )}
 
-                <div ref={threadEndRef} />
+                <div ref={threadEndRef} className="thread-end" />
               </>
             )}
           </div>

@@ -109,8 +109,8 @@ export function agendaForTask(task: { when?: string | null; note: string; label?
   const text = `${task.label ?? ''}. ${task.note}`;
   const when = parseWhen(task.when ?? (fromIris && !isEvergreen(text) ? inferWhen(text, today) : null));
   const note = task.note.trim();
-  const description = fromIris ? stripWhen(note) : note;
-  return when ? { ...placed(when, today), description } : { day: null, at: null, time: '', description };
+  // With no day to put it under, its wording is the only place the day and time are kept.
+  return when ? { ...placed(when, today), description: fromIris ? stripWhen(note) : note } : { day: null, at: null, time: '', description: note };
 }
 
 // Days in order, each with its entries in time order (ties keep the order they
