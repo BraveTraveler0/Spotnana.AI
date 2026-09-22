@@ -7,7 +7,8 @@ interface Props {
   // When Iris last wrote the feed; the posts are stamped with how long ago that was.
   updated: string;
   isAdded: (post: Post) => boolean;
-  onAddTask: (post: Post) => void;
+  // Resolves true when the task really saved; only then does the card leave.
+  onAddTask: (post: Post) => boolean | Promise<boolean>;
   onDismiss: (post: Post) => void;
   // How many are dismissed right now, and how to bring them back.
   dismissed: number;
@@ -45,14 +46,29 @@ export default function InsightFeed({ posts, updated, isAdded, onAddTask, onDism
   const shown = showAll ? posts : posts.slice(0, VISIBLE);
   const stamp = timeAgo(updated);
   // Dominus's rule: adding to tasks is the end of the card's life here — it
-  // fades and collapses (the task lives in Next now, not in this feed).
+  // fades and collapses (the task lives in Next now, not in this feed). The
+  // dismissal is sequenced AFTER the task save resolves: the save also records
+  // choice 'added', and a dismiss written first gets overwritten by it, which
+  // used to leave the card stuck on "Added to tasks" instead of leaving.
   const handleAdd = (post: Post) => {
     setSettling((prev) => new Set(prev).add(post.id));
-    onAddTask(post);
-    window.setTimeout(() => {
-      setSettling((prev) => { const next = new Set(prev); next.delete(post.id); return next; });
-      onDismiss(post);
-    }, 700);
+    const save = Promise.resolve(onAddTask(post));
+    const fade = new Promise<void>((resolve) => window.setTimeout(resolve, 700));
+    // Both must finish before the card leaves: the fade so it reads as a
+    // deliberate settle, the save so the dismiss can't be overwritten by the
+    // 'added' choice the save records (that race left cards stuck on
+    // "Added to tasks" instead of leaving). A failed save keeps the card so
+    // the add can be retried.
+    Promise.all([save, fade])
+      .then(([saved]) => {
+        if (saved !== false) onDismiss(post);
+      })
+      .catch(() => {
+        /* a failed save keeps the card */
+      })
+      .finally(() => {
+        setSettling((prev) => { const next = new Set(prev); next.delete(post.id); return next; });
+      });
   };
 
   return (

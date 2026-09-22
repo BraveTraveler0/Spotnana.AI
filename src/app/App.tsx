@@ -10,6 +10,8 @@ import type { GeocodeResult } from './components/daily/types';
 import type { InanaConfig } from './components/daily/useInana';
 import { GATEWAY_SAVED_EVENT } from './components/daily/usePhoneFeed';
 import './App.css';
+import './scrollbars.css';
+import { installScrollbarFlash } from './scrollbarFlash';
 
 interface Message {
   id: string;
@@ -347,6 +349,9 @@ export default function App() {
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const activeRequestRef = useRef<{ requestId: number; abortController?: AbortController } | null>(null);
   const requestCounterRef = useRef(0);
+
+  // Scrollbars only appear (dimly) while a region is actually being scrolled.
+  useEffect(() => installScrollbarFlash(), []);
 
   useEffect(() => {
     const savedThread = localStorage.getItem('artemis-current-thread');

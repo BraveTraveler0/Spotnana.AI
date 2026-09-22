@@ -1,0 +1,59 @@
+/* Scrollbars: invisible at rest, dim sliver while scrolling.
+   Dominus, 2026-09-22: "i dont like scrollbars. don't show them unless
+   they're currently in use. and make them less visible."
+
+   How it works: a capture-phase scroll listener on document (App.tsx) toggles
+   data-scrolling="on" on the scrolling element and clears it after the
+   SCROLLBAR_FLASH_MS timeout. These rules show a faint thumb only while that
+   attribute is set — nothing shows at rest, and hover never revives it. */
+
+/* --- Firefox-style properties (WebView2 honors scrollbar-width/color) --- */
+.app-scroll-flash {
+  scrollbar-width: thin;
+  /* transparent at rest */
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.35s ease;
+}
+
+.app-scroll-flash.app-scrolling {
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/* --- Chromium/WebView2 pseudo-elements: hidden at rest, dim while scrolling.
+     The !important here overrides the per-region colors set elsewhere in this
+     stylesheet and daily.css (thread-messages, right-section, dd-goal-rows,
+     dd-task-list, dd-menu, dd-taste-row, settings-panel) — they all adopt the
+     same resting-invisible / scrolling-dim behavior. */
+
+/* While NOT scrolling: everything hidden */
+.app-scroll-flash:not(.app-scrolling)::-webkit-scrollbar-thumb,
+.app-scroll-flash:not(.app-scrolling)::-webkit-scrollbar-track,
+.app-scroll-flash:not(.app-scrolling)::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+
+/* While scrolling: thin, dim, rounded */
+.app-scroll-flash.app-scrolling::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.app-scroll-flash.app-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28) !important;
+  border-radius: 3px;
+}
+
+.app-scroll-flash.app-scrolling::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* Hover never keeps a hidden bar alive after the flash dies. */
+.app-scroll-flash:hover::-webkit-scrollbar-thumb {
+  transition: background 0.35s ease;
+}
+
+/* Never allocate layout space at rest beyond the thin bar itself; the track
+   stays transparent so nothing shifts when the thumb appears. */
+* {
+  scrollbar-gutter: auto;
+}

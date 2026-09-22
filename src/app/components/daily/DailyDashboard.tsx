@@ -618,7 +618,10 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
       saved = await addTask({ label, note: label === post.text ? '' : post.text, source: post.author });
     }
     // Remembered, so it stays marked as added and a second click can't make a copy.
+    // The boolean is consumed by InsightFeed: the card only leaves when the task
+    // actually saved.
     if (saved) choosePost(post, 'added');
+    return saved;
   };
 
   const today = new Date();
