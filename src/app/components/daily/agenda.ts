@@ -76,13 +76,22 @@ export function localDay(date: Date): string {
 
 // Which day and time a date puts something at. Something that began before
 // today and is still listed (a weekend-long event, an overdue task) is happening
-// today.
+// today — and sorts by its clock time today, not by its original timestamp,
+// which would seat yesterday 3pm ahead of today 2pm under the same day header.
 function placed(when: { date: Date; hasTime: boolean }, today: Date): { day: string; at: number; time: string } {
   const now = localDay(today);
   const own = localDay(when.date);
   const hours = when.date.getHours();
+  if (own < now) {
+    const clamped = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hours, when.date.getMinutes());
+    return {
+      day: now,
+      at: clamped.getTime(),
+      time: when.hasTime ? clockText(hours % 12 === 0 ? 12 : hours % 12, when.date.getMinutes(), hours >= 12) : '',
+    };
+  }
   return {
-    day: own < now ? now : own,
+    day: own,
     at: when.date.getTime(),
     time: when.hasTime ? clockText(hours % 12 === 0 ? 12 : hours % 12, when.date.getMinutes(), hours >= 12) : '',
   };

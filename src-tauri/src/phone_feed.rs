@@ -93,9 +93,10 @@ fn write_files(dir: &Path, files: &[(String, String)]) -> std::io::Result<()> {
   if let Some((name, text)) = files.iter().find(|(name, _)| name == INDEX_FILE) {
     write_atomically(&dir.join(name), text)?;
   }
+  let kept: std::collections::HashSet<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
   for entry in fs::read_dir(dir)?.flatten() {
     let name = entry.file_name().to_string_lossy().to_string();
-    let stale = name.ends_with(".tmp") || (is_feed_file_name(&name) && !files.iter().any(|(kept, _)| *kept == name));
+    let stale = name.ends_with(".tmp") || (is_feed_file_name(&name) && !kept.contains(name.as_str()));
     if stale {
       let _ = fs::remove_file(entry.path());
     }

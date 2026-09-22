@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode, type RefObject } from 'react';
 import { Check, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { agendaFor, agendaForTask, dayLabel, groupByDay, localDay, type Agenda } from './agenda';
 import { areaFor, costFor } from './place';
@@ -20,6 +20,11 @@ interface IrisSuggestion {
 interface Props {
   // The user's own tasks (typed in, or added from chat).
   tasks: DailyTask[];
+  // Cap for the agenda list, in px. Null/undefined leaves the stylesheet's
+  // default; the dashboard raises it so the column can match its neighbours.
+  agendaMaxHeight?: number | null;
+  // Attached to the agenda list so the dashboard can measure its content.
+  agendaListRef?: RefObject<HTMLUListElement | null>;
   scheduled: ScheduledTaskInfo[];
   // Iris's cards, already minus anything dismissed, accepted or finished.
   nextCards: IrisTaskCard[];
@@ -219,6 +224,8 @@ function AgendaItems({ entries }: { entries: Entry[] }) {
 
 export default function TasksPanel({
   tasks,
+  agendaMaxHeight,
+  agendaListRef,
   scheduled,
   nextCards,
   pendingCards,
@@ -384,7 +391,11 @@ export default function TasksPanel({
 
         {notice && <p className="dd-notice" role="status">{notice}</p>}
 
-        <ul className="dd-task-list">
+        <ul
+          className="dd-task-list"
+          style={agendaMaxHeight ? { maxHeight: agendaMaxHeight } : undefined}
+          ref={agendaListRef ?? undefined}
+        >
           {tab === 'next' &&
             (nextCount > 0 ? (
               <AgendaItems entries={nextEntries} />

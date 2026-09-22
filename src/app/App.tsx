@@ -73,6 +73,7 @@ function getModelNickname(model: string) {
   const lower = model.toLowerCase();
   if (lower.endsWith('-remote')) return model.slice(0, -'-remote'.length);
 
+  if (lower === IRIS_MODEL_ID) return 'Iris';
   if (lower.includes('dolphin-mistral')) return 'Alice the Assistant';
   if (lower.includes('wizard-vicuna')) return 'Musashi - The Strategist';
   if (lower.includes('dolphin-llama3')) return 'Nefrititi, the Scribe';
@@ -85,6 +86,8 @@ function getModelNickname(model: string) {
 
 function getModelSubtitle(model: string) {
   const lower = model.toLowerCase();
+  if (lower === IRIS_MODEL_ID) return 'Synced with Hermes';
+
   if (lower.endsWith('-remote')) return 'Remote server';
 
   if (lower.includes('dolphin-mistral')) return 'Fastest';
@@ -96,6 +99,23 @@ function getModelSubtitle(model: string) {
 
   return '';
 }
+
+// "Iris" is not an Ollama model at all — it routes to the Hermes Agent CLI
+// installed on this machine (the same agent that runs the Daily dashboard's
+// feed, weekly goals, and cron jobs). Talking to Iris means talking to
+// Hermes directly: full conversation history is kept in Hermes's own session
+// store under the title "iris-bridge" (persistent across app restarts — that
+// is the sync the picker promises), and every Hermes tool (calendar, cron,
+// browser, email, files) is available to her without any Artemis-side
+// confirmation gate, because Hermes runs under its own permission model.
+const IRIS_MODEL_ID = 'iris-hermes-bridge';
+
+function isIrisModel(model: string) {
+  return model === IRIS_MODEL_ID;
+}
+
+// Hermes keeps its own memory, knowledge, and tools; the eager Artemis-side
+// knowledge pre-fetch would only add an unrelated second context.
 
 function formatActivityEvent(event: string) {
   return event.replace(/_/g, ' ').replace(/^\w/, (letter) => letter.toUpperCase());
@@ -125,6 +145,7 @@ function getToolStatusLabel(tool: string, status: string) {
 // this mirror only decides UI affordances (whether to skip the eager
 // knowledge pre-fetch below).
 function modelSupportsTools(model: string) {
+  if (isIrisModel(model)) return true; // Hermes has her own tools — skip the eager knowledge pre-fetch
   const lower = model.toLowerCase();
   return lower.includes('hermes3') || lower.includes('hermes-3') || lower.includes('qwen2.5');
 }
@@ -257,7 +278,12 @@ export default function App() {
   const [modelOptions, setModelOptions] = useState<string[]>([LOCAL_MODEL]);
   // Why the picker is empty (the phone can't reach horus), shown under it instead of leaving it blank.
   const [modelsError, setModelsError] = useState('');
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('artemis-selected-model') || LOCAL_MODEL);
+  const [selectedModel, setSelectedModel] = useState(() => {
+    const stored = localStorage.getItem('artemis-selected-model');
+    // Iris is the default. A stored pre-Iris default (the old LOCAL_MODEL
+    // fallback) is migrated to her; any deliberate later choice is kept.
+    return stored && stored !== LOCAL_MODEL ? stored : IRIS_MODEL_ID;
+  });
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [knowledgePaths, setKnowledgePaths] = useState<string[]>(() => getStoredKnowledgePaths());
   // Paths marked Secret are structurally invisible to cloud models — enforced
@@ -349,7 +375,17 @@ export default function App() {
 
       const filteredModels = models.filter((model: string) => !isRetiredModel(model) && !(privacyMode && (isCloudModel(model) || isAliceModel(model))));
 
-      if (filteredModels.length > 0) {
+      // Iris (the Hermes bridge) is always first in the picker and always the
+      // default — even when Ollama is down or returns nothing, since she does
+      // not depend on it. Only a stored explicit choice overrides that.
+      if (isTauriRuntime) {
+        setModelOptions([IRIS_MODEL_ID, ...filteredModels.filter((model: string) => !isIrisModel(model))]);
+        if (!localStorage.getItem('artemis-selected-model') || localStorage.getItem('artemis-selected-model') === LOCAL_MODEL) {
+          setSelectedModel(IRIS_MODEL_ID);
+        } else if (!filteredModels.includes(selectedModel) && !isIrisModel(selectedModel)) {
+          setSelectedModel(IRIS_MODEL_ID);
+        }
+      } else if (filteredModels.length > 0) {
         setModelOptions(filteredModels);
         if (!filteredModels.includes(selectedModel)) setSelectedModel(filteredModels[0]);
       }
@@ -792,6 +828,18 @@ export default function App() {
       ? [{ role: 'system', content: `Use these notes from the configured knowledge folders when they are relevant:\n\n${knowledgeContext}` }]
       : [];
     const requestMessages = [{ role: 'system', content: SYSTEM_PROMPT }, ...knowledgeSystemMessage, ...messages];
+
+    // Iris = the Hermes Agent on this machine, in her own persistent session.
+    // Not an Ollama call at all: the request goes to the Rust side, which
+    // runs `hermes chat` against the titled "iris-bridge" session, so the
+    // full conversation history (and Hermes's memory, calendar, cron, every
+    // integration she has) carries over between messages and app restarts.
+    if (isTauriRuntime && isIrisModel(selectedModel)) {
+      const lastMessage = messages[messages.length - 1];
+      return await invoke<string>('ask_iris', {
+        prompt: lastMessage?.content ?? '',
+      });
+    }
 
     if (isTauriRuntime) {
       const unlistenChunk = await listen<{ request_id: number; delta: string }>('ollama-chunk', (event) => {

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { ArrowUpRight, Loader2, Plus, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Loader2, Minus, Plus, Sparkles } from 'lucide-react';
 import DropdownSelect, { type DropdownOption } from './DropdownSelect';
-import type { GoalItem, GoalSection, WeeklyGoals } from './types';
+import type { GoalItem, GoalSection, WeeklyGoal, WeeklyGoals } from './types';
+import type { GoalTaps } from './useGoalTaps';
 
 type GroupItem = GoalItem & { section: string };
 type Period = 'weekly' | 'monthly' | 'yearly';
@@ -10,6 +11,8 @@ interface Props {
   sections: GoalSection[];
   // Iris's weekly goals; null until the first read.
   weekly: WeeklyGoals | null;
+  // The + and − on each weekly goal: what the ring shows, and how a rep is logged or taken back.
+  taps: GoalTaps;
   error: string;
   loaded: boolean;
   breakingDown: Set<string>;
@@ -25,8 +28,9 @@ const PERIODS: DropdownOption[] = [
   { value: 'monthly', label: 'Monthly' },
   { value: 'yearly', label: 'Yearly' },
 ];
-const VISIBLE_GOALS = 4;
-const VISIBLE_RECURRING = 6;
+const VISIBLE_GOALS = 8;
+// The list column scrolls beside the ring, so the cap here just bounds the DOM, not the view.
+const VISIBLE_RECURRING = 12;
 // Up to this many reps a goal shows as one pip each; past it, as a bar.
 const MAX_PIPS = 7;
 const RING_RADIUS = 52;
@@ -56,12 +60,15 @@ interface RecurringRow {
   category: string;
   done: number;
   target: number;
+  goal: WeeklyGoal;
+  // A rep can only be taken back if this week has one (the monthly count includes earlier weeks).
+  canTakeOff: boolean;
 }
 
 // Weekly and monthly are the same goals of Iris's, counted over the calendar
 // week or month; yearly is this year's part of Goals.md (the long-horizon
 // topics live on the Goals tab).
-export default function GoalsWidget({ sections, weekly, error, loaded, breakingDown, onToggle, onBreakDown, onOpenGoals, onStartSession }: Props) {
+export default function GoalsWidget({ sections, weekly, taps, error, loaded, breakingDown, onToggle, onBreakDown, onOpenGoals, onStartSession }: Props) {
   const groups = useMemo(() => {
     const order: string[] = [];
     const byName = new Map<string, GroupItem[]>();
@@ -102,11 +109,15 @@ export default function GoalsWidget({ sections, weekly, error, loaded, breakingD
   const yearDone = yearGroup?.items.filter((item) => item.done).length ?? 0;
   const yearVisible = (yearGroup?.items.filter((item) => !item.done) ?? []).slice(0, VISIBLE_GOALS);
 
-  const rows: RecurringRow[] = weeklyGoals.map((goal) =>
-    period === 'monthly'
-      ? { id: goal.id, title: goal.title, category: goal.category, done: goal.month_done, target: goal.month_target }
-      : { id: goal.id, title: goal.title, category: goal.category, done: goal.done, target: goal.target },
-  );
+  const rows: RecurringRow[] = weeklyGoals.map((goal) => ({
+    id: goal.id,
+    title: goal.title,
+    category: goal.category,
+    done: period === 'monthly' ? taps.monthDone(goal) : taps.weekDone(goal),
+    target: period === 'monthly' ? goal.month_target : goal.target,
+    goal,
+    canTakeOff: taps.weekDone(goal) >= 1,
+  }));
   const repsTotal = rows.reduce((sum, row) => sum + row.target, 0);
   const repsDone = rows.reduce((sum, row) => sum + Math.min(row.done, row.target), 0);
   const visibleRows = [...rows].sort((a, b) => Number(a.done >= a.target) - Number(b.done >= b.target)).slice(0, VISIBLE_RECURRING);
@@ -169,32 +180,53 @@ export default function GoalsWidget({ sections, weekly, error, loaded, breakingD
                   const complete = row.done >= row.target;
                   return (
                     <div className="dd-goal-row" key={row.id}>
-                      <button
-                        type="button"
-                        className="dd-goal-label"
-                        onClick={() => onStartSession(`I just did my weekly goal "${row.title}". Log it for today.`)}
-                        title="Log a rep by telling Iris"
-                      >
-                        <i className={`dd-goal-dot ${complete ? '' : 'open'}`} />
-                        <span>{row.title}</span>
-                      </button>
-                      <div className="dd-goal-card dd-goal-static">
-                        <span>{complete ? `Done for the ${span}` : `${row.target - row.done} to go`}</span>
-                        {row.target <= MAX_PIPS ? (
-                          <span className="dd-pips" aria-hidden>
-                            {Array.from({ length: row.target }, (_, index) => (
-                              <i key={index} className={index < row.done ? 'on' : ''} />
-                            ))}
-                          </span>
-                        ) : (
-                          <span className="dd-bar" aria-hidden>
-                            <i style={{ width: `${Math.min(100, Math.round((row.done / row.target) * 100))}%` }} />
-                          </span>
-                        )}
-                        <em>
-                          {row.done}/{row.target}
-                          {row.category && row.category !== 'other' ? ` · ${row.category}` : ''}
-                        </em>
+                      <div className="dd-goal-tile">
+                        <div className="dd-goal-main">
+                          <button
+                            type="button"
+                            className="dd-goal-label"
+                            onClick={() => onStartSession(`I just did my weekly goal "${row.title}". Log it for today.`)}
+                            title="Log a rep by telling Iris"
+                          >
+                            <i className={`dd-goal-dot ${complete ? '' : 'open'}`} />
+                            <span>{row.title}</span>
+                          </button>
+                          <div className="dd-goal-meta">
+                            <span>{complete ? `Done for the ${span}` : `${row.target - row.done} to go`}</span>
+                            {row.target <= MAX_PIPS ? (
+                              <span className="dd-pips" aria-hidden>
+                                {Array.from({ length: row.target }, (_, index) => (
+                                  <i key={index} className={index < row.done ? 'on' : ''} />
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="dd-bar" aria-hidden>
+                                <i style={{ width: `${Math.min(100, Math.round((row.done / row.target) * 100))}%` }} />
+                              </span>
+                            )}
+                            <em>
+                              {row.done}/{row.target}
+                              {row.category && row.category !== 'other' ? ` · ${row.category}` : ''}
+                            </em>
+                          </div>
+                        </div>
+                        <div className="dd-goal-steps">
+                          <button
+                            type="button"
+                            className={`dd-goal-step ${row.canTakeOff ? '' : 'is-hidden'}`}
+                            onClick={() => taps.log(row.goal, -1)}
+                            disabled={!row.canTakeOff}
+                            tabIndex={row.canTakeOff ? 0 : -1}
+                            aria-hidden={!row.canTakeOff}
+                            aria-label={`Take one off "${row.title}"`}
+                            title="Take one off, if you logged it by mistake"
+                          >
+                            <Minus size={13} />
+                          </button>
+                          <button type="button" className="dd-goal-step" onClick={() => taps.log(row.goal, 1)} aria-label={`I did "${row.title}" once`} title="I did one">
+                            <Plus size={13} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -245,6 +277,8 @@ export default function GoalsWidget({ sections, weekly, error, loaded, breakingD
           </div>
         </div>
       )}
+
+      {recurring && taps.error && <p className="dd-fine dd-goal-note">{taps.error}</p>}
 
       {weekly && !hasWeekly && (
         <div className="dd-goals-hint">

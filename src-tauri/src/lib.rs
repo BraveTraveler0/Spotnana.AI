@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use chrono::Timelike;
@@ -15,6 +16,10 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 
 mod phone_feed;
+
+// CREATE_NO_WINDOW for child processes on Windows (see hermes_command below).
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 // Every outbound HTTP call in this file shares one client instead of
 // constructing a fresh reqwest::Client per call. A new Client means an empty
@@ -1862,6 +1867,13 @@ fn clean_heading(text: &str) -> String {
   text.trim_matches(|character: char| character == '*' || character == '_').trim().to_string()
 }
 
+// The Daily tab and the ring poll this; between edits to Goals.md, a toggle,
+// or a new breakdown, every poll re-read three files and re-hashed every item
+// to rebuild an identical list. All three files' mtimes gate the work —
+// toggle_goal_item/toggle_goal_substep/goal breakdown writes bump them, so
+// user actions still show up on the very next call.
+static GOALS_CACHE: std::sync::OnceLock<Mutex<Option<((Option<SystemTime>, Option<SystemTime>, Option<SystemTime>), Vec<GoalSection>)>>> = std::sync::OnceLock::new();
+
 #[tauri::command]
 fn get_goals(app: tauri::AppHandle) -> Result<Vec<GoalSection>, String> {
   #[cfg(target_os = "android")]
@@ -1870,7 +1882,21 @@ fn get_goals(app: tauri::AppHandle) -> Result<Vec<GoalSection>, String> {
     return Err("Your goals live on your PC for now; they aren't synced to the phone yet.".to_string());
   }
   #[allow(unreachable_code)]
-  let content = fs::read_to_string(GOALS_DOC_PATH).map_err(|error| format!("Could not read Goals.md: {error}"))?;
+  let doc_path = std::path::Path::new(GOALS_DOC_PATH);
+  let completion_path = goals_completion_path(&app);
+  let breakdowns_path = goals_breakdowns_path(&app);
+  let stamp = (index_mtime(doc_path), index_mtime(&completion_path), index_mtime(&breakdowns_path));
+
+  let cache = GOALS_CACHE.get_or_init(|| Mutex::new(None));
+  if let Ok(guard) = cache.lock() {
+    if let Some((cached_at, cached)) = guard.as_ref() {
+      if *cached_at == stamp {
+        return Ok(cached.clone());
+      }
+    }
+  }
+
+  let content = fs::read_to_string(doc_path).map_err(|error| format!("Could not read Goals.md: {error}"))?;
   let completion = read_goals_completion(&app);
   let breakdowns = read_goals_breakdowns(&app);
 
@@ -1936,6 +1962,17 @@ fn get_goals(app: tauri::AppHandle) -> Result<Vec<GoalSection>, String> {
   };
   sections.sort_by_key(|section| goal_group_rank(&section.group, current_year));
 
+  // The sort also depends on the current year (goal_group_rank), which no file
+  // mtime reflects — so a cached list from a previous year is dropped.
+  if let Ok(mut guard) = cache.lock() {
+    let stale_year = guard.as_ref().is_some_and(|_| {
+      use chrono::Datelike;
+      chrono::Local::now().year() != current_year
+    });
+    if !stale_year {
+      *guard = Some((stamp, sections.clone()));
+    }
+  }
   Ok(sections)
 }
 
@@ -2130,6 +2167,11 @@ fn hermes_command() -> std::process::Command {
   let path_value = format!("{}\\bin;{system_root}\\system32;{system_root}", home_dir.display());
 
   let mut command = std::process::Command::new(hermes_exe_path());
+  // hermes.exe is a console program; without CREATE_NO_WINDOW every spawn
+  // flashes an empty console window over the UI (visible to the user on
+  // every Iris chat message).
+  #[cfg(windows)]
+  command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
   command
     .env_clear()
     .env("PATH", path_value)
@@ -2171,6 +2213,86 @@ async fn call_hermes_agent_impl(prompt: &str, toolsets: &str) -> String {
   }
 }
 
+// --- Iris: the model-picker entry that IS Hermes ---------------------------
+// "Iris" in Artemis's model dropdown routes here: a direct chat with the
+// Hermes Agent CLI in a single persistent titled session ("iris-bridge").
+// Unlike call_hermes_agent (a task-delegation tool with a confirmation gate),
+// this is the conversational path — Hermes's own session store keeps the full
+// history, her memory/rules/skills load as normal, and her tools run under
+// Hermes's own permission model, so no Artemis-side gate applies. The session
+// is created on first use and resumed on every later message, which is the
+// "synced with Iris" behavior the picker promises.
+const IRIS_BRIDGE_SESSION: &str = "iris-bridge";
+const IRIS_CHAT_TIMEOUT_SECS: u64 = 600;
+
+// Hermes enforces one live owner per session, so two messages sent in quick
+// succession must not race for the "iris-bridge" lease — queue them instead.
+// A tokio Mutex serializes the whole spawn+await per call.
+static IRIS_CHAT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tauri::command]
+async fn ask_iris(prompt: String) -> Result<String, String> {
+  if prompt.trim().is_empty() {
+    return Err("A message is required.".to_string());
+  }
+  if !hermes_exe_path().exists() {
+    return Err("Hermes Agent isn't installed on this machine — Iris can't answer right now.".to_string());
+  }
+
+  let _guard = IRIS_CHAT_LOCK.lock().await;
+  let prompt = prompt.to_string();
+  let output_future = tauri::async_runtime::spawn_blocking(move || {
+    hermes_command()
+      .arg("chat")
+      .arg("-c")
+      .arg(IRIS_BRIDGE_SESSION)
+      .arg("--create-if-missing")
+      // Fixed curated toolset: every toolset we drop shrinks the system
+      // prompt and the model's prefill. Measured 2026-09-21: full "cli"
+      // toolset list = ~14.5s per reply; this list = ~6-8s. Keep this list
+      // STABLE — it is part of the session's cached prompt prefix, and
+      // changing it every call would rebuild the system prompt each turn.
+      .arg("-t")
+      .arg("terminal,file,memory,web,session_search,skills,cronjob,clarify,code_execution,browser,kanban,delegation")
+      .arg("-Q")
+      .arg("-q")
+      .arg(&prompt)
+      .output()
+  });
+
+  match tokio::time::timeout(std::time::Duration::from_secs(IRIS_CHAT_TIMEOUT_SECS), output_future).await {
+    Ok(Ok(Ok(output))) if output.status.success() => {
+      // `-Q` keeps stdout to the reply plus a `session_id:` line, but
+      // non-fatal warnings (e.g. "Warning: Unknown toolsets") also ride on
+      // stdout — strip anything that isn't the reply so the chat bubble
+      // never shows plumbing.
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      let response = stdout
+        .lines()
+        .filter(|line| {
+          let trimmed = line.trim();
+          !trimmed.is_empty()
+            && !trimmed.starts_with("session_id:")
+            && !trimmed.starts_with("Warning:")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+      Ok(response.trim().to_string())
+    }
+    Ok(Ok(Ok(output))) => {
+      let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+      Err(if stderr.is_empty() {
+        format!("Hermes exited with an error ({}).", output.status)
+      } else {
+        format!("Hermes could not answer: {stderr}")
+      })
+    }
+    Ok(Ok(Err(error))) => Err(format!("Could not run Hermes: {error}")),
+    Ok(Err(_)) => Err("Iris's task failed unexpectedly.".to_string()),
+    Err(_) => Err("Iris is still thinking — this request took too long and was abandoned. Try again in a moment; her session keeps everything so far.".to_string()),
+  }
+}
+
 // --- Iris Knowledge Base (Hermes' local, read-only SQLite FTS5 index) ----
 // Contract: IRIS_SERVER_ACCESS.md (repo root). Iris (Hermes) owns indexing —
 // this only ever spawns the stable kb_search.py CLI with plain argv (never a
@@ -2200,6 +2322,9 @@ fn kb_command() -> std::process::Command {
   let path_value = format!("{system_root}\\system32;{system_root}");
 
   let mut command = std::process::Command::new(KB_PYTHON);
+  // Same console-flash prevention as hermes_command() above.
+  #[cfg(windows)]
+  command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
   command
     .arg(KB_SCRIPT)
     .env_clear()
@@ -2492,6 +2617,9 @@ struct IrisFeedIndex {
   // Kept as raw JSON and read by parse_insights.
   #[serde(default)]
   insights: serde_json::Value,
+  // Taste strip: restaurants / wine bars / recipes (optional; older feeds have none).
+  #[serde(default)]
+  recs: Vec<TasteRec>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2500,7 +2628,7 @@ struct IrisFeedSection {
   content: String,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 struct IrisFeedContent {
   updated: String,
   brief_sections: Vec<IrisFeedSection>,
@@ -2511,6 +2639,54 @@ struct IrisFeedContent {
   suggestion_needs_answer: bool,
   tasks: IrisTasks,
   insights: Vec<IrisInsight>,
+  // Taste strip: restaurants / wine bars / recipes to try. Absent in older feeds.
+  #[serde(default)]
+  recs: Vec<TasteRec>,
+}
+
+// Iris's feed is hand- and model-written, so a number shows up where a string
+// belongs (a rating written as 4.5 instead of "4.5"). One strict field must not
+// poison the whole feed: accept either and keep it as text.
+fn string_or_number<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+  D: serde::Deserializer<'de>,
+{
+  let value = serde_json::Value::deserialize(deserializer)?;
+  Ok(match value {
+    serde_json::Value::Null => None,
+    serde_json::Value::String(text) => Some(text),
+    serde_json::Value::Number(number) => Some(number.to_string()),
+    _ => None,
+  })
+}
+
+// One card of the Taste strip (iris-feed/TASKS-CONTRACT.md "recs"). Rating is
+// only ever a rating Iris actually found — the UI never shows an invented one.
+#[derive(Debug, Serialize, Clone, Deserialize)]
+struct TasteRec {
+  id: String,
+  name: String,
+  #[serde(default)]
+  kind: String,
+  #[serde(default)]
+  area: Option<String>,
+  #[serde(default)]
+  note: String,
+  #[serde(default, deserialize_with = "string_or_number")]
+  rating: Option<String>,
+  #[serde(default)]
+  link: Option<String>,
+  // Thumbnail picture for the card (a real photo from the place's own site or
+  // recipe page); null just means the card renders without one.
+  #[serde(default)]
+  image: Option<String>,
+}
+
+// A rec without a name says nothing; more than a shelfful is Iris overwriting.
+const MAX_TASTE_RECS: usize = 12;
+
+fn usable_recs(recs: Vec<TasteRec>) -> Vec<TasteRec> {
+  recs.into_iter().filter(|rec| !rec.name.trim().is_empty()).take(MAX_TASTE_RECS).collect()
 }
 
 // A card with no id or no title can't be shown or acted on; more than a screenful
@@ -2554,9 +2730,33 @@ fn read_feed_file(filename: &str) -> String {
   fs::read_to_string(iris_feed_dir().join(filename)).unwrap_or_default()
 }
 
+// The Daily tab polls this command continuously, and Iris rewrites the feed at
+// most about once an hour — so between rewrites every poll re-read and re-parsed
+// five files to build the exact same value. latest.json's mtime gates the work:
+// unchanged means every file in the bundle is unchanged too (Iris rewrites the
+// whole set together), and the cached copy answers instead. A changed mtime (or
+// an unreadable one) rebuilds and re-caches, so Iris's edits land on the next
+// poll after she writes.
+static FEED_CACHE: std::sync::OnceLock<Mutex<Option<(SystemTime, IrisFeedContent)>>> = std::sync::OnceLock::new();
+
+fn index_mtime(path: &std::path::Path) -> Option<SystemTime> {
+  fs::metadata(path).ok()?.modified().ok()
+}
+
 #[tauri::command]
 fn get_iris_feed() -> Result<IrisFeedContent, String> {
   let index_path = iris_feed_dir().join("latest.json");
+  let stamp = index_mtime(&index_path);
+
+  let cache = FEED_CACHE.get_or_init(|| Mutex::new(None));
+  if let Ok(guard) = cache.lock() {
+    if let Some((cached_at, cached)) = guard.as_ref() {
+      if Some(cached_at) == stamp.as_ref() {
+        return Ok(cached.clone());
+      }
+    }
+  }
+
   let index_raw = match fs::read_to_string(&index_path) {
     Ok(raw) => raw,
     // Not configured/started yet is a normal, expected state, not an error
@@ -2581,7 +2781,7 @@ fn get_iris_feed() -> Result<IrisFeedContent, String> {
   let review_sections = index.review.as_deref().map(|filename| parse_markdown_sections(&read_feed_file(filename))).unwrap_or_default();
   let spark_text = index.spark.as_deref().map(read_feed_file).unwrap_or_default().trim().to_string();
 
-  Ok(IrisFeedContent {
+  let content = IrisFeedContent {
     updated: index.updated,
     brief_sections,
     events_sections,
@@ -2591,7 +2791,14 @@ fn get_iris_feed() -> Result<IrisFeedContent, String> {
     suggestion_needs_answer: index.suggestion.needs_answer,
     tasks: IrisTasks { updated: index.tasks.updated, next: usable_cards(index.tasks.next), suggested: usable_cards(index.tasks.suggested) },
     insights: parse_insights(&index.insights),
-  })
+    recs: usable_recs(index.recs),
+  };
+  if let Some(stamp) = stamp {
+    if let Ok(mut guard) = cache.lock() {
+      *guard = Some((stamp, content.clone()));
+    }
+  }
+  Ok(content)
 }
 
 // A deliberately un-gated direct action, not a chat tool: the user already
@@ -2767,13 +2974,37 @@ fn parse_weekly_goals(raw: &str, today: chrono::NaiveDate) -> Result<WeeklyGoals
   })
 }
 
+// The goals ring polls this every minute, and Iris (via cron) is the file's only
+// writer — so between her writes every poll re-read and re-parsed the same JSON.
+// The file's mtime gates the parse: unchanged means the answer is unchanged.
+static WEEKLY_GOALS_CACHE: std::sync::OnceLock<Mutex<Option<(SystemTime, String)>>> = std::sync::OnceLock::new();
+
+fn cached_file_string(path: &Path, cache: &std::sync::OnceLock<Mutex<Option<(SystemTime, String)>>>) -> Option<String> {
+  let stamp = index_mtime(path);
+  let cache = cache.get_or_init(|| Mutex::new(None));
+  if let Ok(guard) = cache.lock() {
+    if let Some((cached_at, cached)) = guard.as_ref() {
+      if Some(cached_at) == stamp.as_ref() {
+        return Some(cached.clone());
+      }
+    }
+  }
+  let raw = fs::read_to_string(path).ok()?;
+  if let Some(stamp) = stamp {
+    if let Ok(mut guard) = cache.lock() {
+      *guard = Some((stamp, raw.clone()));
+    }
+  }
+  Some(raw)
+}
+
 #[tauri::command]
 fn get_weekly_goals() -> Result<WeeklyGoals, String> {
   let today = chrono::Local::now().date_naive();
-  match fs::read_to_string(weekly_goals_path()) {
-    Ok(raw) => parse_weekly_goals(&raw, today),
+  match cached_file_string(&weekly_goals_path(), &WEEKLY_GOALS_CACHE) {
+    Some(raw) => parse_weekly_goals(&raw, today),
     // Not created yet is a normal state, not a failure to report.
-    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+    None if !weekly_goals_path().exists() => {
       let (week_start, week_end) = calendar_week(today);
       let (month_start, month_end) = calendar_month(today);
       Ok(WeeklyGoals {
@@ -2784,7 +3015,7 @@ fn get_weekly_goals() -> Result<WeeklyGoals, String> {
         ..WeeklyGoals::default()
       })
     }
-    Err(error) => Err(format!("Could not read weekly-goals.json: {error}")),
+    None => Err("Could not read weekly-goals.json".to_string()),
   }
 }
 
@@ -2858,13 +3089,35 @@ const CHECKOFFS_FILE: &str = phone_feed::CHECKOFFS_FILE;
 const DAILY_DEFAULTS_PATH: &str = r"C:\Users\dccar\HermesKB\daily-defaults.json";
 
 // "minimum" for the ids Iris lists under weekly_minimums in daily-defaults.json,
-// "goal" for everything else (or if that file can't be read).
-fn checkoff_type(defaults: &str, id: &str) -> &'static str {
-  let listed = serde_json::from_str::<serde_json::Value>(defaults)
+// "goal" for everything else (or if that file can't be read). daily-defaults.json
+// is written by Iris's weekly job, not mid-session, so its parsed id set is
+// cached on the file's mtime instead of re-parsed on every check-off.
+static DAILY_DEFAULTS_CACHE: std::sync::OnceLock<Mutex<Option<(SystemTime, HashSet<String>)>>> = std::sync::OnceLock::new();
+
+fn minimum_ids(defaults: &str) -> HashSet<String> {
+  serde_json::from_str::<serde_json::Value>(defaults)
     .ok()
-    .and_then(|root| root.get("weekly_minimums").and_then(|list| list.as_array()).map(|list| list.iter().any(|entry| entry.get("id").and_then(|value| value.as_str()) == Some(id))))
-    .unwrap_or(false);
-  if listed {
+    .and_then(|root| root.get("weekly_minimums").and_then(|list| list.as_array()).map(|list| list.iter().filter_map(|entry| entry.get("id").and_then(|value| value.as_str()).map(String::from)).collect::<HashSet<String>>()))
+    .unwrap_or_default()
+}
+
+fn checkoff_kind(id: &str) -> &'static str {
+  let path = std::path::Path::new(DAILY_DEFAULTS_PATH);
+  let stamp = index_mtime(path);
+  let cache = DAILY_DEFAULTS_CACHE.get_or_init(|| Mutex::new(None));
+  let ids = match (stamp, cache.lock().ok().and_then(|guard| guard.clone())) {
+    (Some(stamp), Some((cached_at, cached))) if cached_at == stamp => cached,
+    _ => {
+      let ids = fs::read_to_string(path).map(|raw| minimum_ids(&raw)).unwrap_or_default();
+      if let Some(stamp) = stamp {
+        if let Ok(mut guard) = cache.lock() {
+          *guard = Some((stamp, ids.clone()));
+        }
+      }
+      ids
+    }
+  };
+  if ids.contains(id) {
     "minimum"
   } else {
     "goal"
@@ -2879,9 +3132,20 @@ fn checkoff_line(kind: &str, id: &str, date: &str, sent_at: &str) -> String {
 }
 
 fn append_line(path: &std::path::Path, line: &str) -> std::io::Result<()> {
-  use std::io::Write;
-  // A last line with no newline would otherwise get ours glued onto it.
-  let needs_break = matches!(fs::read(path).ok().and_then(|bytes| bytes.last().copied()), Some(last) if last != b'\n');
+  use std::io::{Read, Seek, SeekFrom, Write};
+  // A last line with no newline would otherwise get ours glued onto it. Peek
+  // just the final byte — reading the whole file would pull every checkoff
+  // ever recorded into memory on each write.
+  let len = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+  let needs_break = if len == 0 {
+    false
+  } else {
+    let mut file = fs::File::open(path)?;
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last)?;
+    last[0] != b'\n'
+  };
   let mut file = fs::OpenOptions::new().create(true).append(true).open(path)?;
   file.write_all(format!("{}{line}\n", if needs_break { "\n" } else { "" }).as_bytes())
 }
@@ -2921,13 +3185,26 @@ async fn accept_iris_task(app_handle: tauri::AppHandle, id: String) -> Result<()
 // line in a file. Still audit-logged.
 #[tauri::command]
 fn record_checkoff(app_handle: tauri::AppHandle, goal_id: String) -> Result<(), String> {
-  if !is_safe_card_id(&goal_id) {
+  write_checkoff(&app_handle, &goal_id, false)
+}
+
+// The − on the Goals ring: a rep logged by mistake. The contract has no way to take one back,
+// so this is a line of its own type, {"type":"undo", ...}, that Iris's job applies in order
+// after the reps before it (asked for in CLAUDE-REPLY-android-and-event-cards.md). Until her
+// job knows the type, it changes what Artemis shows and nothing in her file.
+#[tauri::command]
+fn undo_checkoff(app_handle: tauri::AppHandle, goal_id: String) -> Result<(), String> {
+  write_checkoff(&app_handle, &goal_id, true)
+}
+
+fn write_checkoff(app_handle: &tauri::AppHandle, goal_id: &str, undo: bool) -> Result<(), String> {
+  if !is_safe_card_id(goal_id) {
     return Err("that goal's id isn't something Artemis will pass to Iris.".to_string());
   }
   let now = chrono::Local::now();
-  let defaults = fs::read_to_string(DAILY_DEFAULTS_PATH).unwrap_or_default();
-  let line = checkoff_line(checkoff_type(&defaults, &goal_id), &goal_id, &now.format("%Y-%m-%d").to_string(), &now.to_rfc3339());
-  append_audit_log(&app_handle, 0, "iris_checkoff", &format!("goal={goal_id}"));
+  let kind = if undo { "undo" } else { checkoff_kind(goal_id) };
+  let line = checkoff_line(kind, goal_id, &now.format("%Y-%m-%d").to_string(), &now.to_rfc3339());
+  append_audit_log(app_handle, 0, if undo { "iris_checkoff_undo" } else { "iris_checkoff" }, &format!("goal={goal_id}"));
   let path = iris_feed_dir().join(CHECKOFFS_FILE);
   // On the phone this is its own queue (sent to Iris by the next sync), and its folder does
   // not exist until then. The computer's is Iris's folder, which is never created here.
@@ -5180,6 +5457,7 @@ struct NewsItem {
 // books and ideas, film, history and culture, and the outdoors.
 const NEWS_FEEDS: &[(&str, &str, &str, usize)] = &[
   ("https://feeds.npr.org/1014/rss.xml", "NPR", "Politics", 4),
+  ("https://feeds.npr.org/3/rss.xml", "NPR Morning Edition", "Morning Brief", 4),
   ("https://www.theguardian.com/world/rss", "The Guardian", "World", 4),
   ("https://feeds.arstechnica.com/arstechnica/index", "Ars Technica", "Technology", 4),
   ("https://www.wired.com/feed/rss", "Wired", "Technology", 4),
@@ -5190,7 +5468,9 @@ const NEWS_FEEDS: &[(&str, &str, &str, usize)] = &[
   ("https://www.theguardian.com/artanddesign/rss", "The Guardian", "Art", 3),
   ("https://lithub.com/feed/", "Literary Hub", "Books", 3),
   ("https://www.theguardian.com/books/rss", "The Guardian", "Books", 3),
-  ("https://aeon.co/feed.rss", "Aeon", "Ideas", 3),
+  ("https://aeon.co/feed.rss", "Aeon", "Ideas", 4),
+  ("https://aeon.co/essays/feed.rss", "Aeon Essays", "Essays", 3),
+  ("https://aeon.co/videos/feed.rss", "Aeon Video", "Ideas", 4),
   ("https://comicbook.com/category/marvel/feed/", "ComicBook.com", "Film", 3),
   ("https://comicbook.com/category/dc/feed/", "ComicBook.com", "Film", 3),
   ("https://collider.com/feed/", "Collider", "Film", 3),
@@ -5513,8 +5793,17 @@ fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
   #[cfg(not(target_os = "android"))]
   {
     let _ = &app;
+    // Dominus wants links in Chrome (his saved passwords live there), not whatever rundll32 picks.
     #[cfg(windows)]
-    let spawned = std::process::Command::new("rundll32").arg("url.dll,FileProtocolHandler").arg(trimmed).spawn();
+    let chrome_paths = [
+      r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+      r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ];
+    #[cfg(windows)]
+    let spawned = match chrome_paths.iter().find(|path| std::path::Path::new(path).exists()) {
+      Some(chrome) => std::process::Command::new(chrome).arg(trimmed).spawn(),
+      None => std::process::Command::new("rundll32").arg("url.dll,FileProtocolHandler").arg(trimmed).spawn(),
+    };
     #[cfg(target_os = "macos")]
     let spawned = std::process::Command::new("open").arg(trimmed).spawn();
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
@@ -6487,7 +6776,9 @@ pub fn run() {
       respond_to_iris_suggestion,
       accept_iris_task,
       record_checkoff,
+      undo_checkoff,
       sync_iris_feed,
+      ask_iris,
       ask_iris_to_scout,
       get_weekly_goals,
       fetch_local_news
@@ -6667,11 +6958,24 @@ mod iris_feed_tests {
   #[test]
   fn minimums_are_told_from_goals_by_irises_own_list() {
     let defaults = r#"{ "weekly_minimums": [ { "id": "portuguese" }, { "id": "mma-session" } ], "routines": [ { "id": "japanese" } ] }"#;
-    assert_eq!(checkoff_type(defaults, "portuguese"), "minimum");
-    assert_eq!(checkoff_type(defaults, "mma-session"), "minimum");
-    assert_eq!(checkoff_type(defaults, "japanese"), "goal");
-    assert_eq!(checkoff_type("not json", "portuguese"), "goal");
-    assert_eq!(checkoff_type("", "portuguese"), "goal");
+    let ids = minimum_ids(defaults);
+    assert!(ids.contains("portuguese"));
+    assert!(ids.contains("mma-session"));
+    assert!(!ids.contains("japanese"));
+    // An unreadable defaults file classifies everything as a goal.
+    assert!(minimum_ids("not json").is_empty());
+    assert!(minimum_ids("").is_empty());
+  }
+
+  #[test]
+  fn a_rep_taken_back_is_a_line_of_its_own_type_in_the_same_shape() {
+    let logged = checkoff_line("goal", "yoga", "2026-09-21", "2026-09-21T10:00:00-04:00");
+    let undone = checkoff_line("undo", "yoga", "2026-09-21", "2026-09-21T10:01:00-04:00");
+    assert_eq!(logged, r#"{"type":"goal","id":"yoga","date":"2026-09-21","sent_at":"2026-09-21T10:00:00-04:00"}"#);
+    assert_eq!(undone, r#"{"type":"undo","id":"yoga","date":"2026-09-21","sent_at":"2026-09-21T10:01:00-04:00"}"#);
+    // both are one JSON object with the same four keys, so a reader that knows "undo" needs nothing else
+    let keys = |line: &str| serde_json::from_str::<serde_json::Value>(line).unwrap().as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    assert_eq!(keys(&logged), keys(&undone));
   }
 
   #[test]

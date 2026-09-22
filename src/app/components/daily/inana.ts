@@ -40,7 +40,7 @@ export interface InanaStripe {
 export interface InanaGa4 {
   product_id: string;
   product_name: string;
-  summary: { sessions: number };
+  summary: { sessions: number; dailySessions?: { date: string; sessions: number }[] };
 }
 
 export interface InanaProduct {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'motion/react';
+import { RefreshCw } from 'lucide-react';
 import GoalsWidget from './GoalsWidget';
 import { InanaInsight, InanaKpis } from './InanaPanels';
 import { scopeOptions } from './inana';
@@ -12,15 +13,17 @@ import { parseSpark } from './markdown';
 import { CATEGORY_TOPIC, TOPICS } from './newsTopics';
 import { HideButton, NewsBlockBody, TopStory, type NewsBlockData, type NewsBlockStyle } from './NewsPanels';
 import TasksPanel from './TasksPanel';
+import TasteStrip from './TasteStrip';
 import { REVIEW_PREFIX, reviewSuggestions } from './reviewSuggestions';
 import { recentlyFinished, withoutFinished } from './finished';
 import { cardKey, useFinishedCards, useHandledCards, useScoutRequest } from './useIrisCards';
 import { useHandledPosts, postKey } from './useHandledPosts';
+import { useGoalTaps } from './useGoalTaps';
 import { useHiddenTopics } from './useHiddenTopics';
 import { useInana } from './useInana';
 import { isAndroid, usePhoneFeed } from './usePhoneFeed';
 import WeatherGlyph from './WeatherGlyph';
-import type { DailyTask, GoalSection, GoalSubStep, IrisFeedContent, IrisTaskCard, LocationInfo, NewsItem, ScheduledTaskInfo, WeatherInfo, WeeklyGoals } from './types';
+import type { DailyTask, GoalSection, GoalSubStep, IrisFeedContent, IrisTaskCard, LocationInfo, NewsItem, ScheduledTaskInfo, TasteRec, WeatherInfo, WeeklyGoals } from './types';
 import './daily.css';
 
 interface Props {
@@ -92,6 +95,9 @@ const NEWS_BLOCK_SPECS: BlockSpec[] = [
   { style: 'grid', topic: 'art', label: 'Art', categories: ['Art'], count: 2, min: 2 },
   { style: 'compact', topic: 'science', label: 'Science', categories: ['Science'], count: 4, min: 2 },
   { style: 'tall', topic: 'ideas', label: 'Ideas', categories: ['Ideas'], count: 1, min: 1 },
+   { style: 'rows', topic: 'essays', label: 'Aeon Essays', categories: ['Essays'], count: 3, min: 2 },
+   { style: 'compact', topic: 'morning', label: 'Morning Brief', categories: ['Morning Brief'], count: 3, min: 2 },
+   { style: 'compact', topic: 'ideas', label: 'Ideas', categories: ['Ideas'], count: 3, min: 2 },
   { style: 'rows', topic: 'books', label: 'Books', categories: ['Books'], count: 3, min: 2 },
   { style: 'feature', topic: 'film', label: 'Film', categories: ['Film'], count: 1, min: 1 },
   { style: 'grid', topic: 'history', label: 'History & Culture', categories: ['History', 'Culture'], count: 4, min: 2 },
@@ -154,6 +160,7 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   const [breakingDown, setBreakingDown] = useState<Set<string>>(new Set());
   const [irisFeed, setIrisFeed] = useState<IrisFeedContent | null>(null);
   const [weekly, setWeekly] = useState<WeeklyGoals | null>(null);
+  const goalTaps = useGoalTaps(weekly);
   const [suggestionAnswered, setSuggestionAnswered] = useState(false);
   const [suggestionResponding, setSuggestionResponding] = useState(false);
   const { handled, dismiss: dismissCard, markAccepted } = useHandledCards();
@@ -180,6 +187,12 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   const [, setLayoutTick] = useState(0);
   const middleRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
+  // Left column parity: the agenda's cap starts at the stylesheet default and
+  // grows only while the left column is shorter than the middle one, so the
+  // three columns read as one page instead of the left stopping early.
+  const [agendaMaxHeight, setAgendaMaxHeight] = useState<number | null>(null);
+  const agendaListRef = useRef<HTMLUListElement>(null);
+  const leftColRef = useRef<HTMLDivElement>(null);
 
   // MarketGenius runs on the PC, so on a phone there is nothing to ask and no Inana panels.
   const inana = useInana(isTauri && active && !isAndroid, inanaVersion);
@@ -210,6 +223,34 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     // Local news follows the place too, so it reloads whenever the weather does.
     invoke<NewsItem[]>('fetch_local_news').then(setLocalNews).catch(() => setLocalNews([]));
   }, []);
+
+  // Dominus's refresh button: re-runs every loader the dashboard has, ignoring
+  // the staleness gates so what's on screen is always the newest the sources have.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshInana = inana.refresh;
+  const syncPhoneFeed = phoneFeed.sync;
+  const refreshAll = useCallback(() => {
+    setRefreshing(true);
+    loadedAt.current.weather = 0;
+    loadedAt.current.news = 0;
+    loadedAt.current.trailers = 0;
+    setFeedVersion((version) => version + 1);
+    // On the phone this also brings over a fresh copy of Iris's files; off it, nothing happens.
+    void syncPhoneFeed(true);
+    if (isTauri) {
+      loadWeather();
+      invoke<NewsItem[]>('fetch_daily_news').then((items) => { setNews(items); setNewsError(''); }).catch(() => {});
+      invoke<NewsItem[]>('fetch_movie_trailers').then(setTrailers).catch(() => {});
+      invoke<DailyTask[]>('list_todos').then(setTasks).catch(() => {});
+      invoke<ScheduledTaskInfo[]>('list_scheduled_tasks_direct').then(setScheduled).catch(() => {});
+      invoke<GoalSection[]>('get_goals').then((sections) => { setGoals(sections); setGoalsError(''); }).catch(() => {});
+      invoke<WeeklyGoals>('get_weekly_goals').then((next) => setWeekly((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next))).catch(() => {});
+    }
+    // Inana is a stable callback that does nothing when its panels are off (the phone).
+    void refreshInana();
+    // release the spinner on the next tick after the state updates land
+    setTimeout(() => setRefreshing(false), 900);
+  }, [isTauri, loadWeather, refreshInana, syncPhoneFeed]);
 
   // Tasks and goals are cheap local reads and can change from the Chat and
   // Goals tabs, so they refresh on every visit; weather and headlines only when
@@ -455,12 +496,25 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     if (!card.goal_id) return;
     try {
       await invoke('record_checkoff', { goalId: card.goal_id });
+      // The Goals ring counts it too (when the card's goal is one of the ring's).
+      goalTaps.recorded(card.goal_id);
       // On the phone the line waits in a queue until it can go to Iris over Tailscale; try now.
       void phoneFeed.sync(true);
     } catch (err) {
       setCardNotice(`Checked off here, but Iris wasn't told: ${String(err)}`);
     }
   };
+
+  // Taking a rec ("worth a taste") onto your list saves it like any task: the
+  // name on the line, the hook as its note, the part of town as its area. The
+  // recipe kind reads as "To cook" on the card, so say that on the task too.
+  const addRec = async (rec: TasteRec): Promise<boolean> =>
+    addTask({
+      label: rec.kind === 'recipe' ? `Cook ${rec.name}` : rec.name,
+      note: rec.note,
+      source: 'Worth a taste',
+      area: rec.area,
+    });
 
   // Her insights replace the older one-line suggestion (TASKS-CONTRACT.md: "read
   // insights instead"). While both are in the feed they are the same thought said
@@ -513,6 +567,24 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     if (sideBySide && right.offsetHeight < middle.offsetHeight && shownBlocks < newsBlocks.length) {
       setShownBlocks((count) => count + 1);
     }
+  });
+
+  // Left column: same parity, from the other end. The agenda list is capped so
+  // a long day never stretches the page; the cap rises in steps while the whole
+  // left column is still shorter than the middle one and the list holds hidden
+  // content. Once the column matches, or the list is fully shown (it scrolls in
+  // place beyond that), the cap stops moving.
+  useLayoutEffect(() => {
+    const left = leftColRef.current;
+    const middle = middleRef.current;
+    const agenda = agendaListRef.current;
+    if (!active || !left || !middle || !agenda) return;
+    if (!window.matchMedia('(min-width: 1101px)').matches) return;
+    if (left.offsetHeight >= middle.offsetHeight) return;
+    const missing = agenda.scrollHeight - agenda.clientHeight;
+    if (missing <= 4) return; // nothing hidden left to reveal
+    const step = Math.min(missing, Math.max(180, Math.round(middle.offsetHeight * 0.1)));
+    setAgendaMaxHeight((current) => (current ?? agenda.clientHeight) + step);
   });
 
   // Re-check whenever either column changes size (charts loading, the window
@@ -579,7 +651,7 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     <div className="dd-root">
       <div className="dd-grid">
         {/* ---- Left: today at a glance, tasks ---- */}
-        <div className="dd-col dd-col-left">
+        <div className="dd-col dd-col-left" ref={leftColRef}>
           <Reveal>
             <div className="dd-hero">
               <div className="dd-hero-date">
@@ -612,6 +684,8 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
           <Reveal delay={0.08} className="dd-stack">
             <TasksPanel
               tasks={tasks}
+              agendaMaxHeight={agendaMaxHeight}
+              agendaListRef={agendaListRef}
               scheduled={scheduled}
               nextCards={nextCards}
               pendingCards={pendingCards}
@@ -699,21 +773,24 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
                 {topStory && <TopStory item={topStory} onOpen={openLink} onBroken={reportBroken} />}
               </section>
             )}
+          </Reveal>
+
+          <Reveal delay={0.26}>
             <hr className="dd-rule" />
           </Reveal>
 
-          <Reveal delay={0.22}>
-            <GoalsWidget sections={goals} weekly={weekly} error={goalsError} loaded={goalsLoaded} breakingDown={breakingDown} onToggle={toggleGoal} onBreakDown={breakDownGoal} onOpenGoals={onOpenGoals} onStartSession={onStartGoalSession} />
+          <Reveal delay={0.28}>
+            <GoalsWidget sections={goals} weekly={weekly} taps={goalTaps} error={goalsError} loaded={goalsLoaded} breakingDown={breakingDown} onToggle={toggleGoal} onBreakDown={breakDownGoal} onOpenGoals={onOpenGoals} onStartSession={onStartGoalSession} />
           </Reveal>
 
           {!isAndroid && (
-            <Reveal delay={0.28}>
+            <Reveal delay={0.34}>
               <InanaInsight {...inanaProps} refreshing={inana.refreshing} onScopeChange={setScope} onRefresh={inana.refresh} />
             </Reveal>
           )}
 
           {allPosts.length > 0 && (
-            <Reveal delay={0.32}>
+            <Reveal delay={0.38}>
               <InsightFeed
                 posts={posts}
                 updated={irisFeed?.updated ?? ''}
@@ -725,15 +802,40 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
               />
             </Reveal>
           )}
+
+          {/* ---- Taste shelves last: restaurants/bars and cooking, side by side with nothing below ---- */}
+          {(irisFeed?.recs?.length ?? 0) > 0 && (
+            <Reveal delay={0.42}>
+              <section className="dd-section">
+                <div className="dd-section-head dd-head-center">
+                  <h2 className="dd-section-title">Worth a taste</h2>
+                </div>
+                <TasteStrip recs={irisFeed?.recs ?? []} onOpenLink={openLink} onAddRec={addRec} />
+              </section>
+            </Reveal>
+          )}
         </div>
 
         {/* ---- Right: Inana's headline numbers, then news in varied categories and styles ---- */}
         <div className="dd-col dd-col-right" ref={rightRef}>
-          {!isAndroid && (
-            <Reveal delay={0.06} className="dd-kpi-wrap">
-              <InanaKpis {...inanaProps} />
-            </Reveal>
-          )}
+          {/* The top-right corner of the tab: Inana's headline numbers, and the button that refreshes everything. */}
+          <div className="dd-top-right">
+            {!isAndroid && (
+              <Reveal delay={0.06} className="dd-kpi-wrap">
+                <InanaKpis {...inanaProps} />
+              </Reveal>
+            )}
+            <button
+              type="button"
+              className="dd-refresh"
+              onClick={refreshAll}
+              disabled={refreshing}
+              aria-label="Refresh everything"
+              title="Refresh everything: weather, news, tasks, goals, Iris's feed and Inana"
+            >
+              <RefreshCw size={16} className={refreshing ? 'dd-spin' : ''} />
+            </button>
+          </div>
 
           <div className="dd-right-body">
             {news === null && !newsError && <div className="dd-feature dd-skeleton" aria-hidden />}

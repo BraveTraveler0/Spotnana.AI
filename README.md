@@ -66,7 +66,10 @@ The APK lands in `C:\build\artemis-out`. The build runs in a local copy of the r
 
 ### Inana (MarketGenius) numbers
 
-The Daily tab's Inana panels read your local MarketGenius server (`http://localhost:8080`, start it yourself). There is no login or password: `npm run inana:token` gives Artemis its own long-lived access token for your MarketGenius owner account and saves it in `%APPDATA%\com.artemis.ai\inana.json`. It skips MarketGenius's `qa-…@example.com` test accounts (add `--email you@example.com` to choose one). Run it again if Artemis ever says its access has run out.
+The Daily tab's Inana panels read your MarketGenius. There is no login or password: `npm run inana:token` gives Artemis its own long-lived access token for your MarketGenius owner account and saves it in `%APPDATA%\com.artemis.ai\inana.json`. It skips MarketGenius's `qa-…@example.com` test accounts (add `--email you@example.com` to choose one). Run it again if Artemis ever says its access has run out.
+
+- **Hosted MarketGenius (Render + Vercel), the real one:** `npm run inana:token -- --hosted --email you@example.com`. It needs the hosted server's own `JWT_SECRET` and `DATABASE_URI` (Render → `marketinggenius-backend-server` → Environment) pasted into `%USERPROFILE%\.artemis-inana\hosted.env`, which is outside OneDrive. The token is tried against the hosted server before anything is saved, and the two values are cleared afterwards.
+- **A local MarketGenius** (`http://localhost:8080`, started with `npm run dev` in its `server` folder) works with the plain command, but it has its own separate database.
 
 ## Notes
 

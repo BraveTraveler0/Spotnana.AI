@@ -34,3 +34,10 @@ iris-feed/*.json
 *.keystore
 keystore.properties
 src-tauri/gen/android/local.properties
+
+# Installer artifacts and local logs stay out of the repo
+Artemis-AI-Installer.msi
+Artemis-AI-Setup.exe
+Artemis-Desktop-Installer.zip
+.git-autopush.log
+scripts/feed-server.log

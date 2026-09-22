@@ -1008,11 +1008,16 @@ body,
 .thread-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Same button, same spot — becomes Stop while the AI is working. */
-.thread-send-stop { background-color: #ff8a80; }
+.thread-send-stop {
+  background-color: transparent;
+  color: #ff8a80;
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 128, 0.45);
+}
 
 .thread-send-stop:hover:not(:disabled) {
-  background-color: #ff766b;
-  box-shadow: 0 0 20px rgba(255,138,128,0.35);
+  background-color: rgba(255, 138, 128, 0.1);
+  color: #ff766b;
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 128, 0.6);
 }
 
 .right-section::-webkit-scrollbar {
@@ -1340,11 +1345,16 @@ body,
 
 .button-submit:active:not(:disabled) { transform: scale(0.96); }
 
-.button-stop { background-color: #ff8a80; }
+.button-stop {
+  background-color: transparent;
+  color: #ff8a80;
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 128, 0.45);
+}
 
 .button-stop:hover:not(:disabled) {
-  background-color: #ff766b;
-  box-shadow: 0 0 25px rgba(255, 138, 128, 0.35);
+  background-color: rgba(255, 138, 128, 0.1);
+  color: #ff766b;
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 128, 0.6);
 }
 
 .spinner {

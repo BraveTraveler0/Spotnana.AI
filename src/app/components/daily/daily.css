@@ -544,6 +544,14 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
+  /* Dominus: the agenda must not stretch the page. A long day list scrolls in
+     place; short lists are untouched (no scrollbar, no clipped cards). */
+  max-height: 560px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
 .dd-task {
@@ -970,6 +978,190 @@
   margin-top: 18px;
 }
 
+/* ---- Taste strip: Iris's restaurants / wine bars / recipes, its own shelf in ---- */
+/* ---- the middle column, cards with a picture and the same + / x as suggestions ---- */
+
+.dd-taste {
+  margin: 4px 0 6px;
+}
+
+.dd-taste-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dd-taste-label {
+  margin: 0;
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 300;
+  font-size: clamp(19px, 1.6vw, 24px);
+  line-height: 1.1;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.dd-taste-arrows {
+  display: flex;
+  gap: 6px;
+}
+
+.dd-taste-arrow {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.dd-taste-arrow:hover {
+  color: var(--lime);
+  border-color: rgba(214, 254, 129, 0.5);
+  box-shadow: 0 0 14px rgba(214, 254, 129, 0.25);
+}
+
+.dd-taste-row {
+  list-style: none;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  padding: 8px 2px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.dd-taste-card {
+  position: relative;
+  scroll-snap-align: start;
+  flex: 0 0 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0 12px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dd-taste-pic {
+  width: calc(100% + 24px);
+  margin: 0 -12px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 13px 13px 0 0;
+  display: block;
+}
+
+.dd-taste-kind {
+  margin-top: 10px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.dd-taste-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  text-align: left;
+}
+
+.dd-taste-ext {
+  flex: none;
+}
+
+.dd-taste-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.66);
+  overflow-wrap: anywhere;
+}
+
+.dd-taste-meta {
+  font-size: 10.5px;
+  color: var(--lime);
+  letter-spacing: 0.3px;
+}
+
+/* The + rides the top-right corner like the suggested cards'; the × sits just
+   under it, over the picture when there is one. */
+.dd-taste-add {
+  position: absolute;
+  top: -8px;
+  right: -6px;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(6, 12, 22, 0.8);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.dd-taste-add:hover {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: #073277;
+  box-shadow: 0 0 18px rgba(214, 254, 129, 0.5);
+  transform: scale(1.08);
+}
+
+.dd-taste-add:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.dd-taste-x {
+  position: absolute;
+  top: 18px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: rgba(6, 12, 22, 0.55);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dd-taste-x:hover {
+  color: rgb(254, 202, 202);
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.dd-taste-added {
+  font-size: 10.5px;
+  color: var(--lime);
+  letter-spacing: 0.3px;
+}
+
+@media (max-width: 700px) {
+  .dd-taste-card {
+    flex-basis: 164px;
+  }
+}
+
 /* ---- Middle: greeting, quote, story ----------------------------------------------- */
 
 .dd-greeting-row {
@@ -1176,19 +1368,28 @@
 /* ---- Goals ------------------------------------------------------------------------- */
 
 .dd-goals {
+  /* The goal tiles need about 260px; the ring gets everything else, up to a point. */
+  --ring: clamp(128px, calc(100cqw - 276px), 230px);
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 32px;
+  grid-template-columns: var(--ring) minmax(0, 1fr);
+  gap: 16px;
   align-items: center;
+  /* The ring's own height; the tiles column caps to it so both sides read even. */
+  --goals-rows-h: var(--ring);
 }
 
 .dd-ring {
   position: relative;
-  width: 96px;
-  height: 96px;
+  display: grid;
+  place-content: center;
+  width: var(--ring, 96px);
+  height: var(--ring, 96px);
+  text-align: center;
 }
 
 .dd-ring svg {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   transform: rotate(-90deg);
@@ -1217,38 +1418,65 @@
 
 .dd-ring-value,
 .dd-ring-sub {
-  position: absolute;
-  left: 0;
-  right: 0;
-  text-align: center;
+  position: relative;
 }
 
 .dd-ring-value {
-  top: 28px;
   font-family: 'Cormorant Garamond', serif;
-  font-size: 26px;
+  font-size: calc(var(--ring, 96px) * 0.27);
   line-height: 1;
 }
 
 .dd-ring-sub {
-  top: 58px;
-  font-size: 10px;
+  margin-top: calc(var(--ring, 96px) * 0.06);
+  font-size: max(11px, calc(var(--ring, 96px) * 0.075));
   letter-spacing: 0.6px;
   color: var(--text-3);
 }
 
+/* One tile per goal, in as many columns as fit, so a wide section isn't a few very wide tiles.
+   The column is capped at the ring's height (see .dd-goals) and scrolls beside it, so the two
+   halves of the section read as the same height instead of the tiles stretching the section. */
 .dd-goal-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 12px;
   min-width: 0;
+  max-height: var(--goals-rows-h, none);
+  overflow-y: auto;
+  /* Breathing room above the first tile and below the last, so tiles don't kiss the edges. */
+  padding: 2px 10px 2px 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
 }
 
+.dd-goal-rows::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dd-goal-rows::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dd-goal-rows::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.dd-goal-rows::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+  background-clip: padding-box;
+}
+
+/* A goal for the year is its name with the next step under it. */
 .dd-goal-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
-  gap: 16px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
 }
 
 .dd-goal-label {
@@ -1383,16 +1611,20 @@
   z-index: 2;
 }
 
-/* In a narrow column the label and its card stack, so a goal's name isn't cut to three letters. */
+/* In a narrow section the ring sits above the goals instead of beside them. */
 @container (max-width: 399px) {
   .dd-goals {
-    grid-template-columns: 84px minmax(0, 1fr);
+    --ring: clamp(140px, 52cqw, 190px);
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
     gap: 20px;
   }
 
-  .dd-goal-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+  .dd-goal-rows {
+    width: 100%;
+    /* Stacked layout: cap to a comfortable viewport-height so it still scrolls,
+       instead of the whole section growing with every goal. */
+    --goals-rows-h: clamp(220px, calc(var(--ring) * 2), 420px);
   }
 }
 
@@ -1739,6 +1971,21 @@
 
 /* ---- Insights: Iris and Inana posting short notes, like a feed ---- */
 
+/* Dominus: adding an insight to tasks ends its life in this feed — fade and
+   collapse so the list reads as handled, with the task itself living in Next. */
+.dd-post-settling {
+  opacity: 0;
+  max-height: 0;
+  transform: translateX(12px);
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 0.55s ease, max-height 0.6s ease, transform 0.55s ease,
+    margin-bottom 0.6s ease, padding 0.6s ease;
+}
+
 .dd-feed {
   list-style: none;
   padding: 4px 22px;
@@ -1748,6 +1995,8 @@
   display: flex;
   gap: 14px;
   padding: 18px 0;
+  transition: opacity 0.35s ease, transform 0.35s ease, max-height 0.6s ease,
+    margin-bottom 0.6s ease, padding 0.6s ease;
 }
 
 .dd-post + .dd-post {
@@ -2385,7 +2634,7 @@
     display: contents;
   }
 
-  .dd-kpi-wrap {
+  .dd-top-right {
     grid-column: 1 / -1;
     order: -1;
     margin-bottom: 48px;
@@ -2435,13 +2684,9 @@
     column-count: 1;
   }
 
-  .dd-goals {
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
-  }
-
-  .dd-goal-rows {
-    width: 100%;
+  /* Often just the button here (the phone has no Inana numbers), so no big gap under it. */
+  .dd-top-right {
+    margin-bottom: 28px;
   }
 }
 
@@ -2660,9 +2905,9 @@
   .dd-task-source,
   .dd-tab sup,
   .dd-goal-card em,
+  .dd-goal-tile em,
   .dd-source,
   .dd-source i,
-  .dd-ring-sub,
   .dd-chart-kicker,
   .dd-spark-label {
     font-size: 11px;
@@ -2678,4 +2923,204 @@
 .dd-sync-note .dd-link {
   display: inline;
   padding: 0;
+}
+
+/* ---- Goals: a weekly goal's tile, with its + and − ---------------------------------------- */
+
+/* A weekly goal: its name, what is left, and the + and −, all in one tile. */
+.dd-goal-tile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 10px 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.dd-goal-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* A long name wraps onto a second line rather than being cut off; its dot stays by the first line. */
+.dd-goal-tile .dd-goal-label {
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.dd-goal-tile .dd-goal-label span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.dd-goal-tile .dd-goal-dot {
+  margin-top: 5px;
+}
+
+/* Lines up under the goal's name, past its dot. */
+.dd-goal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 10px;
+  padding-left: 20px;
+}
+
+.dd-goal-tile em {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+  color: rgba(214, 254, 129, 0.72);
+}
+
+.dd-goal-tile .dd-pips {
+  gap: 3px;
+  margin: 0;
+}
+
+.dd-goal-tile .dd-pips i {
+  width: 12px;
+}
+
+.dd-goal-tile .dd-bar {
+  display: block;
+  flex: 0 0 84px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+/* A fixed width, so the cards line up whether or not a goal has a rep to take back. */
+.dd-goal-steps {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 64px;
+}
+
+.dd-goal-step {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(6, 12, 22, 0.8);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.dd-goal-step:hover:not(:disabled) {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: #073277;
+  box-shadow: 0 0 18px rgba(214, 254, 129, 0.5);
+  transform: scale(1.08);
+}
+
+.dd-goal-step:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+
+.dd-goal-step.is-hidden {
+  visibility: hidden;
+}
+
+.dd-goal-note {
+  margin-top: 10px;
+  color: var(--text-2);
+}
+
+@media (pointer: coarse) {
+  .dd-goal-step {
+    width: 38px;
+    height: 38px;
+  }
+
+  .dd-goal-steps {
+    width: 88px;
+    gap: 10px;
+  }
+
+  /* In a tile the name keeps its own line, and the tap area grows around it instead. */
+  .dd-goal-tile .dd-goal-label {
+    position: relative;
+    min-height: 0;
+  }
+
+  .dd-goal-tile .dd-goal-label::before {
+    content: '';
+    position: absolute;
+    inset: -12px -6px -8px;
+  }
+}
+
+/* ---- The top-right corner of the Daily tab: Inana's headline numbers, and the refresh button ---- */
+
+.dd-top-right {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dd-top-right .dd-kpi-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dd-refresh {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  margin: 4px 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(6, 12, 22, 0.7);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.dd-refresh:hover:not(:disabled) {
+  border-color: var(--lime-line);
+  color: var(--lime);
+  box-shadow: 0 0 18px var(--lime-glow);
+}
+
+.dd-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.dd-refresh:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .dd-refresh {
+    width: 40px;
+    height: 40px;
+  }
 }

@@ -52,4 +52,33 @@
 
 **To verify on your side:** `GET` with the key returns the JSON above (missing or wrong key → `401`); `POST` appends to `checkoffs.jsonl` and returns `200`, and the same line twice appends once.
 
+## 4. New: + and − on the Goals ring (one small thing to add to your check-off job)
+
+Dominus asked for a button on each weekly goal to log a rep without going back to chat, and a minus to take one back after a mistake.
+
+- **+ needs nothing from you.** It is exactly a goal-card check-off: one `{"type":"goal"|"minimum","id":"<the goal's id in weekly-goals.json>","date":"<today>","sent_at":"…"}` line appended to `checkoffs.jsonl`.
+- **− is new: a line of type `undo`.** `{"type":"undo","id":"<goal id>","date":"<today>","sent_at":"…"}`. Please apply it in order with the lines before it: remove one completion of that goal, the one dated `date` if there is one, else the most recent this week, and never go below zero. A + then a − in a row nets to nothing.
+- Until your job knows `undo`, a − only changes what Artemis shows: the ring keeps the count Dominus meant until your file agrees, then follows it. Your file (and anything built from it) would still count the rep.
+- The phone sends `undo` lines through `POST /artemis/checkoffs` like the others.
+
+## 5. Your refresh button (`IRIS-BRIEF-refresh-button.md`): it crashed the Daily tab, now fixed and in the build
+
+- **The bug:** `refreshAll` listed `loadWeather` in its dependency array, but `loadWeather` is a `const` declared further down the component. React evaluates that array on the first render, so it throws "Cannot access 'loadWeather' before initialization" and the whole Daily tab would not draw. `vite build` does not type-check, so the build would have shipped it; a strict `tsc --noEmit` over `src/app/components/daily` reports it as TS2448. Worth running a type check on any `.tsx` you change before handing it over.
+- **The fix:** I moved `refreshAll` (and its state) to just below `loadWeather`. I also made it refresh Inana (`inana.refresh`), because a button called "Refresh everything" that skips the numbers he suspects are stale would surprise him. Your inline-styled button stays as you wrote it.
+- **Checked in a browser harness at 1293 px and 390 px:** the Daily tab renders, one click re-runs weather, news, trailers, tasks, scheduled tasks, goals, weekly goals, your feed and Inana, the button is disabled while it runs and usable again about a second later.
+
+## 6. Reply to IRIS-BRIEF-build-order.md (2026-09-21, 12:50)
+
+**Shipped in the desktop build that went live at 12:47** (Dominus's window is running it): event-card reader and fixes, Inana on the hosted server, the + and − on each weekly goal (with the `undo` line from section 4), a much bigger Goals ring with each goal's title inside its tile, your refresh button, Chrome-first links, the Aeon and Morning Brief blocks, and `refreshAll`. The phone APK with the same front end is building now.
+
+**Things that differ from your brief, so you are not surprised:**
+- **Inana has no sign-in and no saved login any more.** Dominus said so directly ("just dont make it a pssword thing"), so `inana_sign_in_again` and the keyring are gone. Artemis holds one long-lived access token in `inana.json` (`npm run inana:token -- --hosted` made it; good until 2036). Your "belt-and-suspenders" auto-relogin path was removed on purpose; please don't put it back.
+- **Your refresh button moved.** It is now a visible bordered circle in the top-right corner of the Daily tab, next to Inana's headline numbers (`.dd-refresh`), because Dominus still could not find it in the greeting row. It also refreshes Inana now, and on the phone it pulls a fresh copy of your feed.
+- **The + and − are on the tile itself,** not a click on the whole card; the goal's title (still clickable, tells you in chat) is inside the tile.
+- **Not committed by me.** Nobody has asked me to commit; the tree is in a buildable state, so whoever commits can. I ran a strict type check before every build.
+
+**One regression to know about (fixed in the tree, ships in the next desktop build):** your `hasAnyData` change to `InanaPanels.tsx` made the empty-state card require `status === 'ready'`, so "Inana isn't linked", "access has run out" and "couldn't reach Inana" could never appear. TypeScript flagged it (TS2367 on the `status === 'error'` line inside that block). I kept your Website-traffic card, restored the condition to "show the message unless we are ready with real numbers", and made that card say why ad numbers are missing when a source failed instead of "connect Meta Ads".
+
+**What Dominus is seeing in Inana right now (your part to relay):** on the hosted server, `GET /api/data/meta/ad-accounts?productId=<Wanderwork>` returns HTTP 502 "Could not read ad accounts from Meta — try reconnecting." It returned 200 with real spend a couple of hours earlier. So the top row shows only Sessions from Google Analytics. Artemis can't fix that: Meta has to be reconnected for Wanderwork inside MarketGenius (Settings → Integrations). Stripe is not connected for either product, and AonCreative has no Meta or Google Analytics.
+
 — Claude

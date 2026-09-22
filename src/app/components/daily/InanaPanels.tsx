@@ -37,9 +37,20 @@ function stateMessage(status: InanaStatus, data: InanaData | null): { text: stri
   if (status === 'expired') return { text: "Artemis's access to Inana has run out.", action: 'connect', label: 'How to renew it' };
   if (status === 'error') return { text: "Couldn't reach Inana.", action: 'retry', label: 'Try again' };
   if (status === 'ready' && data && data.meta.length === 0 && !data.stripe) {
+    // GA4 traffic still counts as data — it gets shown, not hidden (see the sessions card below).
+    if (data.errors.length > 0) {
+      return { text: `Inana is connected, but couldn't read your ad numbers — ${data.errors[0]}`, action: 'open', label: 'Open Inana' };
+    }
     return { text: "Inana is connected, but no ad account or Stripe is linked yet — link one inside Inana and it'll show up here.", action: 'open', label: 'Open Inana' };
   }
   return null;
+}
+
+// True when at least one source has something real to draw, even if the
+// Meta/Stripe halves are missing — the panels then show that part instead of
+// the "nothing linked" card.
+function hasAnyData(data: InanaData): boolean {
+  return data.meta.length > 0 || Boolean(data.stripe) || data.ga4.some((entry) => (entry.summary?.sessions ?? 0) > 0);
 }
 
 // ---- Headline numbers (right column) ---------------------------------------
@@ -133,6 +144,8 @@ export function InanaInsight({ status, data, config, scope, error, refreshing, o
   const options = useMemo(() => (data ? scopeOptions(data) : []), [data]);
   const webUrl = config?.web_url ?? '';
   const message = stateMessage(status, data);
+  // With no ad or revenue numbers: say why (a source that failed) or what to link (one that isn't).
+  const adsNote = data && data.errors.length > 0 ? `couldn't read ad numbers — ${data.errors[0]}` : 'connect Meta Ads or Stripe in Inana for spend & revenue';
 
   const openHome = () => onOpenLink(inanaUrl(webUrl, '/inanna/today', scope));
   const openMeta = () => onOpenLink(inanaUrl(webUrl, '/campaigns/meta-ads', scope));
@@ -164,7 +177,7 @@ export function InanaInsight({ status, data, config, scope, error, refreshing, o
         </div>
       )}
 
-      {message && (
+      {message && !(status === 'ready' && data && hasAnyData(data)) && (
         <div className="dd-card dd-empty-card">
           <p>{message.text}</p>
           <button
@@ -175,6 +188,37 @@ export function InanaInsight({ status, data, config, scope, error, refreshing, o
             <Link2 size={13} /> {message.label}
           </button>
           {status === 'error' && error && <p className="dd-fine">{error}</p>}
+        </div>
+      )}
+
+      {/* GA4-only mode: no Meta/Stripe linked, but real traffic exists — show it
+          with a note pointing at what to link, rather than hiding the numbers. */}
+      {status === 'ready' && data && data.meta.length === 0 && !data.stripe && data.ga4.length > 0 && (
+        <div className="dd-card dd-chart-card">
+          <div className="dd-chart-head">
+            <div>
+              <div className="dd-chart-kicker">
+                Website traffic <span className="dd-live">Live</span>
+              </div>
+              <div className="dd-chart-sub">
+                {data.ga4.length === 1
+                  ? `${data.ga4[0].product_name} — last 30 days · ${adsNote}`
+                  : `All products — last 30 days · ${adsNote}`}
+              </div>
+            </div>
+            <button type="button" className="dd-link" onClick={openHome}>
+              Open <ArrowUpRight size={12} />
+            </button>
+          </div>
+          <div className="dd-meta-grid">
+            {data.ga4.map((entry) => (
+              <div className="dd-meta-tile" key={entry.product_id}>
+                <span>{entry.product_name}</span>
+                <strong>{(entry.summary?.sessions ?? 0).toLocaleString('en-US')}</strong>
+                <em>sessions · last 30 days</em>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -286,7 +330,7 @@ export function InanaInsight({ status, data, config, scope, error, refreshing, o
         </div>
       )}
 
-      {status === 'ready' && data && data.errors.length > 0 && (
+      {status === 'ready' && data && data.errors.length > 0 && (data.meta.length > 0 || Boolean(data.stripe)) && (
         <p className="dd-fine" title={data.errors.join('\n')}>
           Some sources didn&rsquo;t load — hover for details.
         </p>

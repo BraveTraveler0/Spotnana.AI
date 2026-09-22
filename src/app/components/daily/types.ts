@@ -95,6 +95,20 @@ export interface IrisTasks {
   suggested: IrisTaskCard[];
 }
 
+// One card of the Taste strip (iris-feed/TASKS-CONTRACT.md "recs"): a recipe or
+// restaurant worth trying, shown as a horizontally scrolling row in Suggested.
+export interface TasteRec {
+  id: string;
+  name: string;
+  kind: string; // restaurant | wine-bar | brewery | recipe | cafe
+  area: string | null;
+  note: string;
+  rating: string | null; // only ever a rating Iris actually found, e.g. '4.7'
+  link: string | null;
+  // Thumbnail picture on the card; null renders the plain card (no box).
+  image: string | null;
+}
+
 // One weekly-review insight, fused: what changed, what to do about it, and the
 // task "Add to tasks" creates (iris-feed/TASKS-CONTRACT.md).
 export interface IrisInsight {
@@ -117,6 +131,8 @@ export interface IrisFeedContent {
   suggestion_needs_answer: boolean;
   tasks: IrisTasks;
   insights: IrisInsight[];
+  // Taste strip: restaurants / wine bars / recipes to try (optional; older feeds have none).
+  recs: TasteRec[];
 }
 
 export interface WeatherInfo {

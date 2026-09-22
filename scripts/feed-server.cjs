@@ -54,41 +54,46 @@ function safeFileName(name) {
     && (name.endsWith('.md') || name.endsWith('.json'));
 }
 
-function readIfSmall(p) {
+async function readIfSmall(p) {
   try {
-    const st = fs.statSync(p);
+    const st = await fs.promises.stat(p);
     if (st.size > MAX_FILE) return null;
-    return fs.readFileSync(p, 'utf8');
+    return await fs.promises.readFile(p, 'utf8');
   } catch (e) { return null; }
 }
 
-function buildFeedBundle() {
+// Async throughout: the handler runs on the single Node thread, and a blocking
+// read here (or a OneDrive hydration stall) would freeze POST /checkoffs too.
+async function buildFeedBundle() {
   let latest;
   try {
-    latest = fs.readFileSync(path.join(FEED_DIR, 'latest.json'), 'utf8');
+    latest = await fs.promises.readFile(path.join(FEED_DIR, 'latest.json'), 'utf8');
   } catch (e) {
     return { error: 'latest.json unreadable: ' + e.message };
   }
   const files = { 'latest.json': latest };
+  // One parse: the same object yields both the timestamp and the file list.
   let updated = null;
-  try { updated = JSON.parse(latest).updated || null; } catch (e) {}
-
-  // every file latest.json names by plain file name (brief/review/spark/…)
   try {
     const j = JSON.parse(latest);
+    updated = j.updated || null;
+    // every file latest.json names by plain file name (brief/review/spark/…)
     for (const [key, val] of Object.entries(j)) {
       if (typeof val === 'string' && safeFileName(val)) files[val] = null; // mark intent
     }
   } catch (e) {}
   files['weekly-review.md'] = null;
   files['philosophical-spark.md'] = null;
-  if (fs.existsSync(GOALS_FILE)) files['weekly-goals.json'] = null;
+  try {
+    await fs.promises.access(GOALS_FILE);
+    files['weekly-goals.json'] = null;
+  } catch (e) {}
 
   let total = latest.length;
   for (const name of Object.keys(files)) {
     if (name === 'latest.json') continue;
     const p = name === 'weekly-goals.json' ? GOALS_FILE : path.join(FEED_DIR, name);
-    const text = readIfSmall(p);
+    const text = await readIfSmall(p);
     if (text == null) { delete files[name]; continue; }
     total += text.length;
     if (total > MAX_TOTAL) { delete files[name]; continue; }
@@ -146,15 +151,19 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === 'GET' && req.url === '/artemis/feed') {
-    const bundle = buildFeedBundle();
-    if (bundle.error) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+    buildFeedBundle().then((bundle) => {
+      if (bundle.error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(bundle));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(bundle));
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(bundle));
-    log(`GET /artemis/feed from ${req.socket.remoteAddress} -> ${Object.keys(bundle.files).length} files`);
+      log(`GET /artemis/feed from ${req.socket.remoteAddress} -> ${Object.keys(bundle.files).length} files`);
+    }).catch((e) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'feed build failed: ' + e.message }));
+    });
     return;
   }
   if (req.method === 'POST' && req.url === '/artemis/checkoffs') {
