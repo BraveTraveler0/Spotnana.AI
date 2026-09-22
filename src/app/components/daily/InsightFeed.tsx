@@ -43,7 +43,10 @@ export function timeAgo(iso: string, now: number = Date.now()): string {
 export default function InsightFeed({ posts, updated, isAdded, onAddTask, onDismiss, dismissed, onRestore }: Props) {
   const [showAll, setShowAll] = useState(false);
   const [settling, setSettling] = useState<Set<string>>(new Set());
-  const shown = showAll ? posts : posts.slice(0, VISIBLE);
+  // An added insight has left this feed (its task lives in Next now), except
+  // while it is mid-settle: the fade needs the card on screen. Without this
+  // filter a card stuck in the 'added' state by an old bug lingers forever.
+  const shown = (showAll ? posts : posts.slice(0, VISIBLE)).filter((post) => !isAdded(post) || settling.has(post.id));
   const stamp = timeAgo(updated);
   // Dominus's rule: adding to tasks is the end of the card's life here — it
   // fades and collapses (the task lives in Next now, not in this feed). The
