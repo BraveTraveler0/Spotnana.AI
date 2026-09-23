@@ -4872,6 +4872,53 @@ async fn upload_document(app_handle: tauri::AppHandle, knowledge_paths: Vec<Stri
   Ok(format!("Uploaded \"{original_name}\" to {}", destination.display()))
 }
 
+// One chat attachment as the frontend receives it: display name plus the
+// extracted text it rides into the message with.
+#[derive(Debug, Serialize)]
+struct AttachmentContent {
+  name: String,
+  text: String,
+}
+
+// Reads a user-picked file's text so a chat input can attach it to the next
+// message. Same document policy as knowledge-base ingestion — supported_document's
+// extension whitelist, MAX_DOCUMENT_BYTES, the OneDrive cloud-placeholder guard,
+// and extract_document_text's bounded PDF/text read — but nothing is copied
+// anywhere: the text returns to the frontend and then travels exactly where the
+// user's typed words go (same message, same model, same Privacy-Mode gates).
+#[tauri::command]
+fn read_attachment_text(source_path: String) -> Result<AttachmentContent, String> {
+  let path = PathBuf::from(&source_path);
+  let name = path
+    .file_name()
+    .and_then(|name| name.to_str())
+    .unwrap_or("file")
+    .to_string();
+
+  if !supported_document(&path) {
+    return Err(format!(
+      "\"{name}\" isn't a supported attachment type yet — text documents (txt, md, csv, json, html, pdf, …) only."
+    ));
+  }
+
+  let metadata = fs::metadata(&path).map_err(|_| "File not found.".to_string())?;
+  if metadata.len() > MAX_DOCUMENT_BYTES {
+    return Err(format!("\"{name}\" is over the 25 MB attachment limit."));
+  }
+  if is_cloud_placeholder(&metadata) {
+    return Err(
+      "\"{name}\" is a OneDrive cloud-only placeholder — open it once to download it, then attach again."
+        .replace("{name}", &name),
+    );
+  }
+
+  match extract_document_text(&path) {
+    Some(text) if !text.trim().is_empty() => Ok(AttachmentContent { name, text }),
+    Some(_) => Err(format!("\"{name}\" has no extractable text.")),
+    None => Err(format!("Could not read \"{name}\" — try re-saving it as a plain text file or PDF.")),
+  }
+}
+
 fn sanitize_filename_component(input: &str) -> String {
   let cleaned: String = input
     .chars()
@@ -6754,6 +6801,7 @@ pub fn run() {
       remove_todo,
       get_user_memory,
       upload_document,
+      read_attachment_text,
       list_scheduled_tasks_direct,
       cancel_scheduled_task_by_id,
       set_home_assistant_config,

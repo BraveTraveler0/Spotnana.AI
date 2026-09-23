@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronDown, Loader2, Plus, ScrollText, Send, Settings, Shield, Square, Trash2, X } from 'lucide-react';
+import { ChevronDown, FileText, Loader2, Paperclip, Plus, ScrollText, Send, Settings, Shield, Square, Trash2, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -56,6 +56,14 @@ interface ModelProfile {
   detail: string;
   tag: string;
   supportsTools: boolean;
+}
+
+// A document picked from a chat input's paperclip. `text` is the extracted
+// content (read by the Rust layer with the same policy as knowledge-base
+// ingestion); it rides into the next sent message — never stored anywhere else.
+interface ChatAttachment {
+  name: string;
+  text: string;
 }
 
 // The 35B tag is too large for this machine's RAM, and llama3.1:8b carries
@@ -344,6 +352,10 @@ export default function App() {
   const [userMemory, setUserMemory] = useState('');
   const [uploadStatus, setUploadStatus] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  // Document picked from a chat input's paperclip, waiting to be sent with the
+  // next message. One attachment at a time keeps the context-window math sane.
+  const [pendingAttachment, setPendingAttachment] = useState<ChatAttachment | null>(null);
+  const [isPickingAttachment, setIsPickingAttachment] = useState(false);
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
@@ -689,6 +701,44 @@ export default function App() {
     }
   };
 
+  // Paperclip on a chat input: pick a document, read its text through the
+  // Rust layer (same policy as knowledge-base ingestion), and hold it as the
+  // pending attachment that rides into the next sent message.
+  const pickAttachment = async () => {
+    if (!isTauriRuntime || isPickingAttachment) return;
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const picked = await open({
+        multiple: false,
+        title: 'Choose a document to attach',
+      });
+      if (!picked || Array.isArray(picked)) return;
+
+      setIsPickingAttachment(true);
+      const attachment = await invoke<ChatAttachment>('read_attachment_text', { sourcePath: picked });
+      setPendingAttachment(attachment);
+      setError('');
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : typeof err === 'string' ? err : 'Could not attach that file.');
+    } finally {
+      setIsPickingAttachment(false);
+    }
+  };
+
+  // Compose the message actually sent to the model: the user's typed text with
+  // any pending attachment's full text inlined ahead of it. The combined text
+  // then travels the exact same path as a normal message — same model call,
+  // same Privacy-Mode gate, same knowledge-tool gating — so attachments add no
+  // new network surface and nothing is persisted beyond the thread itself.
+  const composeMessageContent = (typed: string, attachment: ChatAttachment | null) => {
+    if (!attachment) return typed;
+    const note = typed.trim()
+      ? 'The user attached this document to their message:'
+      : 'The user sent this document without any accompanying message:';
+    return `${note}\n\n<document name="${attachment.name}">\n${attachment.text}\n</document>`;
+  };
+
   const getKnowledgeContext = async (query: string, paths: string[]) => {
     if (!isTauriRuntime) return '';
 
@@ -929,7 +979,7 @@ export default function App() {
 
   // Start a new conversation from the left-side input
   const handleSubmit = async () => {
-    if (!prompt.trim()) { setError('Please enter a prompt'); return; }
+    if (!prompt.trim() && !pendingAttachment) { setError('Please enter a prompt'); return; }
 
     // Archive current thread if it has content
     if (currentThread.length > 0) {
@@ -943,9 +993,12 @@ export default function App() {
       }
     }
 
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: prompt, timestamp: Date.now() };
+    const messageContent = composeMessageContent(prompt, pendingAttachment);
+    const typedContent = prompt.trim();
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: messageContent, timestamp: Date.now() };
     setCurrentThread([userMsg]);
     setPrompt('');
+    setPendingAttachment(null);
     setIsLoading(true);
     setStreamingContent('');
     setToolStatus(null);
@@ -958,9 +1011,10 @@ export default function App() {
 
     try {
       // Tool-capable models search the knowledge base on demand instead of
-      // always paying for a pre-fetch that may not even be relevant.
+      // always paying for a pre-fetch that may not even be relevant. With an
+      // attachment and no typed text there's nothing meaningful to query with.
       const toolCapable = modelSupportsTools(selectedModel);
-      const knowledgeContext = toolCapable ? '' : await getKnowledgeContext(userMsg.content, knowledgePaths);
+      const knowledgeContext = toolCapable || !typedContent ? '' : await getKnowledgeContext(typedContent, knowledgePaths);
       const aiContent = await callLocalAI(
         [{ role: 'user', content: userMsg.content }],
         knowledgeContext,
@@ -1002,12 +1056,14 @@ export default function App() {
 
   // Continue the conversation from the right-side input
   const handleThreadSubmit = async () => {
-    if (!threadInput.trim() || isLoading) return;
+    if ((!threadInput.trim() && !pendingAttachment) || isLoading) return;
 
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: threadInput, timestamp: Date.now() };
+    const messageContent = composeMessageContent(threadInput, pendingAttachment);
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: messageContent, timestamp: Date.now() };
     const updatedThread = [...currentThread, userMsg];
     setCurrentThread(updatedThread);
     setThreadInput('');
+    setPendingAttachment(null);
     setIsLoading(true);
     setStreamingContent('');
     setToolStatus(null);
@@ -1087,7 +1143,7 @@ export default function App() {
     setError('Request cancelled.');
   };
 
-  const handleClear = () => { setPrompt(''); setError(''); };
+  const handleClear = () => { setPrompt(''); setPendingAttachment(null); setError(''); };
 
   const handleClearHistory = () => {
     setPastThreads([]);
@@ -1392,18 +1448,47 @@ export default function App() {
             </motion.div>
           )}
 
+          {pendingAttachment && (
+            <div className="attachment-chip-row">
+              <div className="attachment-chip" title={`${pendingAttachment.name} — ${pendingAttachment.text.length.toLocaleString()} characters will be attached to your next message`}>
+                <FileText size={14} className="attachment-chip-icon" />
+                <span className="attachment-chip-name">{pendingAttachment.name}</span>
+                <button
+                  type="button"
+                  className="attachment-chip-remove"
+                  onClick={() => setPendingAttachment(null)}
+                  aria-label={`Remove attachment ${pendingAttachment.name}`}
+                  title="Remove attachment"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+          )}
+
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.7, ease: 'easeOut' }}
             className="button-group"
           >
-            <button onClick={handleClear} disabled={isLoading || !prompt.trim()} className="button button-clear">
+            <button onClick={handleClear} disabled={isLoading || (!prompt.trim() && !pendingAttachment)} className="button button-clear">
               Clear
             </button>
             <button
+              type="button"
+              onClick={pickAttachment}
+              disabled={isLoading || isPickingAttachment}
+              className="button button-attach"
+              aria-label="Attach a document"
+              title="Attach a document (txt, md, pdf, csv, …)"
+            >
+              {isPickingAttachment ? <Loader2 size={16} className="spinner-large" /> : <Paperclip size={16} />}
+              <span>{isPickingAttachment ? 'Reading…' : 'Attach'}</span>
+            </button>
+            <button
               onClick={isLoading ? handleCancelThinking : handleSubmit}
-              disabled={!isLoading && !prompt.trim()}
+              disabled={!isLoading && !prompt.trim() && !pendingAttachment}
               className={`button button-submit${isLoading ? ' button-stop' : ''}`}
               aria-label={isLoading ? 'Stop generating' : 'Submit'}
               title={isLoading ? 'Stop generating' : undefined}
@@ -1860,6 +1945,33 @@ export default function App() {
           {/* Reply input — only shown when a thread is active */}
           {(currentThread.length > 0 || isLoading) && (
             <div className="thread-input-area">
+              {pendingAttachment && (
+                <div className="attachment-chip-row thread-attachment-row">
+                  <div className="attachment-chip" title={`${pendingAttachment.name} — ${pendingAttachment.text.length.toLocaleString()} characters will be attached to your next message`}>
+                    <FileText size={14} className="attachment-chip-icon" />
+                    <span className="attachment-chip-name">{pendingAttachment.name}</span>
+                    <button
+                      type="button"
+                      className="attachment-chip-remove"
+                      onClick={() => setPendingAttachment(null)}
+                      aria-label={`Remove attachment ${pendingAttachment.name}`}
+                      title="Remove attachment"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={pickAttachment}
+                disabled={isLoading || isPickingAttachment}
+                className="thread-attach"
+                aria-label="Attach a document"
+                title="Attach a document (txt, md, pdf, csv, …)"
+              >
+                {isPickingAttachment ? <Loader2 size={18} className="spinner-large" /> : <Paperclip size={18} />}
+              </button>
               <textarea
                 value={threadInput}
                 onChange={(e) => setThreadInput(e.target.value)}
@@ -1870,7 +1982,7 @@ export default function App() {
               />
               <button
                 onClick={isLoading ? handleCancelThinking : handleThreadSubmit}
-                disabled={!isLoading && !threadInput.trim()}
+                disabled={!isLoading && !threadInput.trim() && !pendingAttachment}
                 className={`thread-send${isLoading ? ' thread-send-stop' : ''}`}
                 aria-label={isLoading ? 'Stop generating' : 'Send message'}
                 title={isLoading ? 'Stop generating' : 'Send message'}
