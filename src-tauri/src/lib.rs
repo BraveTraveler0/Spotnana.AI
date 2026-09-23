@@ -4906,10 +4906,9 @@ fn read_attachment_text(source_path: String) -> Result<AttachmentContent, String
     return Err(format!("\"{name}\" is over the 25 MB attachment limit."));
   }
   if is_cloud_placeholder(&metadata) {
-    return Err(
-      "\"{name}\" is a OneDrive cloud-only placeholder — open it once to download it, then attach again."
-        .replace("{name}", &name),
-    );
+    return Err(format!(
+      "{name} is a OneDrive cloud-only placeholder — open it once to download it, then attach again."
+    ));
   }
 
   match extract_document_text(&path) {

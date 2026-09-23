@@ -950,6 +950,7 @@ body,
 .thread-input-area {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 12px;
   padding: 16px clamp(20px, 4vw, 48px) 24px;
