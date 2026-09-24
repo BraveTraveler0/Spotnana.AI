@@ -1533,11 +1533,24 @@ struct TodoState {
 
 impl TodoState {
   fn load(path: PathBuf) -> Self {
-    let items = fs::read_to_string(&path)
+    let mut items = fs::read_to_string(&path)
       .ok()
       .and_then(|raw| serde_json::from_str::<TodoListFile>(&raw).ok())
       .map(|file| file.items)
       .unwrap_or_default();
+    // Self-heal: collapse OPEN cards that were saved twice (same label + same
+    // day+time), keeping the first copy. Completed items never collapse.
+    let mut seen: std::collections::HashSet<(String, Option<String>)> = std::collections::HashSet::new();
+    items.retain(|it| {
+      if it.done {
+        return true;
+      }
+      let key = (
+        it.label.trim().to_lowercase(),
+        it.when.as_ref().map(|w| w.chars().take(16).collect::<String>()),
+      );
+      seen.insert(key)
+    });
     TodoState { items: Mutex::new(items), path }
   }
 
@@ -1584,13 +1597,29 @@ fn clean_place_or_cost(value: Option<&str>) -> Option<String> {
 }
 
 fn add_todo_full_impl(state: &TodoState, label: &str, source: &str, note: &str, when: Option<&str>, area: Option<&str>, cost: Option<&str>) -> TodoItem {
+  // Idempotent add: an OPEN task with the same label and the same day+time
+  // (double-clicked +, double-fired save) returns the existing card instead of
+  // pushing a second copy. Completed copies never block a re-add.
+  let when_clean = when.and_then(clean_when);
+  let label_key = label.trim().to_lowercase();
+  let when_key = when_clean.as_ref().map(|w| w.chars().take(16).collect::<String>());
+  let is_dup = |it: &TodoItem| {
+    !it.done
+      && it.label.trim().to_lowercase() == label_key
+      && it.when.as_ref().map(|w| w.chars().take(16).collect::<String>()) == when_key
+  };
+  if let Ok(items) = state.items.lock() {
+    if let Some(existing) = items.iter().find(|it| is_dup(it)) {
+      return existing.clone();
+    }
+  }
   let item = TodoItem {
     id: format!("todo-{}", chrono::Local::now().timestamp_millis()),
     label: label.to_string(),
     done: false,
     source: source.trim().to_string(),
     note: note.trim().to_string(),
-    when: when.and_then(clean_when),
+    when: when_clean,
     area: clean_place_or_cost(area),
     cost: clean_place_or_cost(cost),
   };

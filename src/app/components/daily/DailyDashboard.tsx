@@ -346,7 +346,7 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   const addTask = async ({ label, source, note, when, area, cost }: { label: string; source?: string; note?: string; when?: string | null; area?: string | null; cost?: string | null }) => {
     try {
       const task = await invoke<DailyTask>('add_todo', { label, source: source ?? null, note: note ?? null, when: when ?? null, area: area ?? null, cost: cost ?? null });
-      setTasks((previous) => [...previous, task]);
+      setTasks((previous) => (previous.some((t) => t.id === task.id) ? previous : [...previous, task]));
       return true;
     } catch (err) {
       console.error(err);
