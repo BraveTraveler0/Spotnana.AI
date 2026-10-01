@@ -1252,6 +1252,38 @@
   line-height: 1.55;
 }
 
+/* Quote refresh button — sits inline with the quote footer */
+.dd-quote-refresh {
+  margin-left: 12px;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s, transform 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  vertical-align: middle;
+}
+.dd-quote-refresh:hover:not(:disabled) {
+  opacity: 1;
+  transform: rotate(15deg);
+}
+.dd-quote-refresh:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+.dd-quote-refresh .dd-spin {
+  animation: dd-spin 1s linear infinite;
+}
+@keyframes dd-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .dd-story {
   display: block;
   width: 100%;

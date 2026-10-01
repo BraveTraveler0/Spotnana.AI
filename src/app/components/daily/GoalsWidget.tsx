@@ -119,13 +119,22 @@ export default function GoalsWidget({ sections, weekly, taps, error, loaded, bre
     canTakeOff: taps.weekDone(goal) >= 1,
   }));
   const repsTotal = rows.reduce((sum, row) => sum + row.target, 0);
-  const repsDone = rows.reduce((sum, row) => sum + Math.min(row.done, row.target), 0);
-  const visibleRows = [...rows].sort((a, b) => Number(a.done >= a.target) - Number(b.done >= b.target)).slice(0, VISIBLE_RECURRING);
+    const repsDone = rows.reduce((sum, row) => sum + Math.min(row.done, row.target), 0);
+    const visibleRows = [...rows].sort((a, b) => Number(a.done >= a.target) - Number(b.done >= b.target)).slice(0, VISIBLE_RECURRING);
 
-  const ringDone = recurring ? repsDone : yearDone;
-  const ringTotal = recurring ? repsTotal : yearTotal;
-  const percent = ringTotal > 0 ? Math.round((ringDone / ringTotal) * 100) : 0;
-  const span = period === 'monthly' ? 'month' : 'week';
+    const ringDone = recurring ? repsDone : yearDone;
+    const ringTotal = recurring ? repsTotal : yearTotal;
+
+    // Weekly: 100% at 90% of tasks. Monthly: 100% at 30% of tasks.
+    // Both can exceed 100% (extra credit shown on the ring).
+    const effectiveTotal = recurring
+      ? period === 'monthly'
+        ? Math.round(repsTotal * 0.3)  // monthly hits 100% at 30%
+      : Math.round(repsTotal * 0.9)  // weekly hits 100% at 90%
+    : ringTotal;
+
+  const percent = effectiveTotal > 0 ? Math.round((ringDone / effectiveTotal) * 100) : 0;
+    const span = period === 'monthly' ? 'month' : 'week';
 
   return (
     <section className="dd-section dd-goals-section">
@@ -151,30 +160,32 @@ export default function GoalsWidget({ sections, weekly, taps, error, loaded, bre
 
       {ringTotal > 0 && (
         <div className="dd-goals">
-          <div
-            className="dd-ring"
-            role="img"
-            aria-label={recurring ? `${percent} percent of this ${span}'s goals done` : `${percent} percent of ${yearGroup?.name ?? 'this year'}'s goals done`}
-          >
-            <svg viewBox="0 0 124 124">
-              <circle className="dd-ring-inner" cx="62" cy="62" r="41" />
-              <circle className="dd-ring-track" cx="62" cy="62" r={RING_RADIUS} />
-              <circle
-                className="dd-ring-progress"
-                cx="62"
-                cy="62"
-                r={RING_RADIUS}
-                strokeDasharray={RING_CIRCUMFERENCE}
-                strokeDashoffset={RING_CIRCUMFERENCE * (1 - percent / 100)}
-              />
-            </svg>
-            <span className="dd-ring-value">{percent}%</span>
-            <span className="dd-ring-sub">
-              {ringDone}/{ringTotal}
-            </span>
-          </div>
+                  <div
+                  className="dd-ring"
+                  role="img"
+                  aria-label={recurring
+                    ? `${percent}% of this ${span} (${Math.min(percent, 200)}% visual${percent > 100 ? ', extra credit' : ''})`
+                    : `${percent} percent of ${yearGroup?.name ?? 'this year'}'s goals done`}
+                >
+                  <svg viewBox="0 0 124 124">
+                    <circle className="dd-ring-inner" cx="62" cy="62" r="41" />
+                    <circle className="dd-ring-track" cx="62" cy="62" r={RING_RADIUS} />
+                    <circle
+                      className="dd-ring-progress"
+                      cx="62"
+                      cy="62"
+                      r={RING_RADIUS}
+                      strokeDasharray={RING_CIRCUMFERENCE}
+                      strokeDashoffset={RING_CIRCUMFERENCE * (1 - Math.min(percent, 200) / 100)}
+                    />
+                  </svg>
+                  <span className="dd-ring-value">{percent}%</span>
+                  <span className="dd-ring-sub">
+                    {ringDone}/{ringTotal}
+                  </span>
+                </div>
 
-          <div className="dd-goal-rows">
+                          <div className="dd-goal-rows">
             {recurring
               ? visibleRows.map((row) => {
                   const complete = row.done >= row.target;

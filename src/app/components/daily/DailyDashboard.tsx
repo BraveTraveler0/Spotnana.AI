@@ -9,7 +9,6 @@ import HiddenSections from './HiddenSections';
 import InsightFeed from './InsightFeed';
 import { buildPosts, type Post } from './insights';
 import LocationPicker from './LocationPicker';
-import { parseSpark } from './markdown';
 import { CATEGORY_TOPIC, TOPICS } from './newsTopics';
 import { HideButton, NewsBlockBody, TopStory, type NewsBlockData, type NewsBlockStyle } from './NewsPanels';
 import TasksPanel from './TasksPanel';
@@ -57,7 +56,18 @@ const QUOTES = [
   { text: 'We are all in the gutter, but some of us are looking at the stars.', by: 'Oscar Wilde', work: "Lady Windermere's Fan" },
   { text: 'There is no fate that cannot be surmounted by scorn.', by: 'Albert Camus', work: 'The Myth of Sisyphus' },
   { text: 'A man can be destroyed but not defeated.', by: 'Ernest Hemingway', work: 'The Old Man and the Sea' },
+  { text: 'The only way to make sense of change is to plunge into it, move with it, and join the dance.', by: 'Alan Watts', work: 'The Wisdom of Insecurity' },
+  { text: 'He who has a why to live can bear almost any how.', by: 'Viktor Frankl', work: "Man's Search for Meaning" },
+  { text: 'The soul becomes dyed with the color of its thoughts.', by: 'Marcus Aurelius', work: 'Meditations' },
+  { text: 'We suffer more in imagination than in reality.', by: 'Seneca', work: 'Moral Letters to Lucilius' },
+  { text: 'Life is not a problem to be solved, but a reality to be experienced.', by: 'Søren Kierkegaard', work: 'Journal, 1843' },
+  { text: 'The purpose of life is not to be happy. It is to be useful, to be honorable, to be compassionate.', by: 'Ralph Waldo Emerson', work: 'Essays: First Series' },
+  { text: 'Man is not fully conditioned and determined but he determines himself whether he gives in to conditions or stands up to them.', by: 'Viktor Frankl', work: "Man's Search for Meaning" },
+  { text: 'The only real voyage of discovery consists not in seeking new landscapes, but in having new eyes.', by: 'Marcel Proust', work: 'In Search of Lost Time' },
 ];
+
+// Cached quotes from Horus (fetched via Tauri command)
+interface CachedQuote { text: string; by: string; work: string; }
 
 function dayOfYear(date: Date): number {
   return Math.floor((date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 86400000);
@@ -184,8 +194,56 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     setBrokenImages((previous) => (previous.has(image) ? previous : new Set(previous).add(image)));
   }, []);
   const [shownBlocks, setShownBlocks] = useState(4);
-  const [, setLayoutTick] = useState(0);
-  const middleRef = useRef<HTMLDivElement>(null);
+    const [, setLayoutTick] = useState(0);
+
+    // Quote pool: merges hardcoded QUOTES with cached quotes from Horus.
+    // The daily quote picks from this combined pool using dayOfYear for consistency,
+    // but a manual refresh cycles to the next quote immediately.
+    const [cachedQuotes, setCachedQuotes] = useState<CachedQuote[]>([]);
+    const [quoteIndex, setQuoteIndex] = useState(0);
+    const [quoteLoading, setQuoteLoading] = useState(false);
+
+    const allQuotes = useMemo(() => {
+      const merged = [...QUOTES, ...cachedQuotes];
+      // Deduplicate by text
+      const seen = new Set<string>();
+      return merged.filter((q) => {
+        const key = q.text.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }, [cachedQuotes]);
+
+    // Fetch cached quotes from Horus on mount (and when dashboard becomes active)
+    useEffect(() => {
+      if (!isTauri || !active) return;
+      let mounted = true;
+      setQuoteLoading(true);
+      invoke<CachedQuote[]>('fetch_daily_quotes')
+        .then((quotes) => {
+          if (mounted && quotes.length > 0) setCachedQuotes(quotes);
+        })
+        .catch(console.error)
+        .finally(() => { if (mounted) setQuoteLoading(false); });
+      return () => { mounted = false; };
+    }, [isTauri, active]);
+
+    // Background refresh of quotes during non-morning hours (after 10am, before 10pm)
+    // Horus is slow, so we only do this when it won't block the morning dashboard load.
+    useEffect(() => {
+      if (!isTauri || !active) return;
+      const hour = new Date().getHours();
+      if (hour < 10 || hour >= 22) return; // morning (before 10am) or late night — skip
+      const timer = setTimeout(() => {
+        invoke<CachedQuote[]>('fetch_daily_quotes')
+          .then((quotes) => { if (quotes.length > 0) setCachedQuotes(quotes); })
+          .catch(console.error);
+      }, 5000); // small delay so dashboard renders first
+      return () => clearTimeout(timer);
+    }, [isTauri, active]);
+
+    const middleRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
   // Left column parity: the agenda's cap starts at the stylesheet default and
   // grows only while the left column is shorter than the middle one, so the
@@ -607,29 +665,34 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   const taskTitles = new Set(tasks.map((task) => task.label.trim().toLowerCase()));
   const isPostAdded = (post: Post) => postChoices[postKey(post)]?.choice === 'added' || (post.task !== undefined && taskTitles.has(post.task.title.trim().toLowerCase()));
   const addPostTask = async (post: Post) => {
-    let saved: boolean;
-    if (post.task) {
-      // The task the insight names, as it is. Its source is not plain "Iris": that
-      // marks an event taken from Suggested, whose day is read out of its text.
-      saved = await addTask({ label: post.task.title, note: post.text === post.task.title ? '' : post.text, source: `${post.author} insight`, when: post.task.when });
-    } else {
-      const cut = post.text.lastIndexOf(' ', 79);
-      const label = post.text.length > 80 ? `${post.text.slice(0, cut > 20 ? cut : 79)}…` : post.text;
-      saved = await addTask({ label, note: label === post.text ? '' : post.text, source: post.author });
-    }
-    // Remembered, so it stays marked as added and a second click can't make a copy.
-    // The boolean is consumed by InsightFeed: the card only leaves when the task
-    // actually saved.
-    if (saved) choosePost(post, 'added');
-    return saved;
-  };
+      let saved: boolean;
+      if (post.task) {
+        // The task the insight names, as it is. Its source is not plain "Iris": that
+        // marks an event taken from Suggested, whose day is read out of its text.
+        saved = await addTask({ label: post.task.title, note: post.text === post.task.title ? '' : post.text, source: `${post.author} insight`, when: post.task.when });
+      } else {
+        const cut = post.text.lastIndexOf(' ', 79);
+        const label = post.text.length > 80 ? `${post.text.slice(0, cut > 20 ? cut : 79)}…` : post.text;
+        saved = await addTask({ label, note: label === post.text ? '' : post.text, source: post.author });
+      }
+      // Remembered, so it stays marked as added and a second click can't make a copy.
+      // The boolean is consumed by InsightFeed: the card only leaves when the task
+      // actually saved.
+      if (saved) choosePost(post, 'added');
+      return saved;
+    };
 
-  const today = new Date();
-  const quote = QUOTES[dayOfYear(today) % QUOTES.length];
-  const spark = irisFeed?.spark_text?.trim();
-  // Iris writes it in Markdown; it is shown as plain text.
-  const sparkParsed = spark ? parseSpark(spark) : null;
-  const sparkParts = sparkParsed && sparkParsed.paragraphs.length > 0 ? sparkParsed : null;
+    // Manual quote refresh: cycles to next quote in the combined pool.
+    const refreshQuote = useCallback(() => {
+      if (allQuotes.length === 0) return;
+      setQuoteIndex((prev) => (prev + 1) % allQuotes.length);
+    }, [allQuotes.length]);
+
+    const today = new Date();
+    // Base index from dayOfYear for daily consistency; manual refresh adds offset via quoteIndex
+    const baseQuoteIndex = dayOfYear(today) % allQuotes.length;
+    const effectiveQuoteIndex = (baseQuoteIndex + quoteIndex) % allQuotes.length;
+    const quote = allQuotes[effectiveQuoteIndex] ?? QUOTES[0];
 
   if (!isTauri) {
     return (
@@ -741,27 +804,27 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
           </Reveal>
 
           <Reveal delay={0.1}>
-            <section className="dd-section">
-              <blockquote className={`dd-quote ${sparkParts ? 'dd-spark' : ''}`}>
-                {sparkParts ? (
-                  <>
-                    <span className="dd-spark-label">{sparkParts.label ? `${sparkParts.label} · from Iris` : 'From Iris'}</span>
-                    {sparkParts.paragraphs.map((text, index) => (
-                      <p key={index}>{text}</p>
-                    ))}
-                    {sparkParts.source && <footer>{sparkParts.source}</footer>}
-                  </>
-                ) : (
-                  <>
-                    <p>&ldquo;{quote.text}&rdquo;</p>
-                    <footer>
-                      — {quote.by}, {quote.work}
-                    </footer>
-                  </>
-                )}
-              </blockquote>
-            </section>
-          </Reveal>
+                      <section className="dd-section">
+                        <blockquote className="dd-quote">
+                          <>
+                            <p>&ldquo;{quote.text}&rdquo;</p>
+                            <footer>
+                              — {quote.by}, {quote.work}
+                            </footer>
+                            <button
+                              type="button"
+                              className="dd-quote-refresh"
+                              onClick={refreshQuote}
+                              disabled={quoteLoading || allQuotes.length <= 1}
+                              aria-label="Refresh quote"
+                              title="Cycle to next quote"
+                            >
+                              <RefreshCw size={14} className={quoteLoading ? 'dd-spin' : ''} />
+                            </button>
+                          </>
+                        </blockquote>
+                      </section>
+                    </Reveal>
 
           <Reveal delay={0.16}>
             {!hidden.has('top') && (

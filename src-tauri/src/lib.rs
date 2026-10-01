@@ -2561,8 +2561,8 @@ struct IrisTaskCard {
   #[serde(default)]
   goal_id: Option<String>,
   #[serde(default)]
-  action: String,
-}
+    action: Option<String>,
+  }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 struct IrisTasks {
@@ -5846,6 +5846,90 @@ async fn fetch_movie_trailers() -> Result<Vec<NewsItem>, String> {
   Ok(fetch_feed_items(TRAILER_FEED.0, TRAILER_FEED.1, "Trailers", 7, Some("trailer")).await)
 }
 
+// --- Daily quotes cache ------------------------------------------------------
+// Stored as JSON in the app data dir: { "quotes": [...], "fetched_at": "ISO8601" }
+// Each quote: { "text": "...", "by": "...", "work": "..." }
+#[derive(Deserialize, Serialize, Clone)]
+struct CachedQuote {
+  text: String,
+  by: String,
+  work: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct QuotesCache {
+  quotes: Vec<CachedQuote>,
+  fetched_at: String,
+}
+
+fn quotes_cache_path(app: &tauri::AppHandle) -> PathBuf {
+  app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from(".")).join("quotes_cache.json")
+}
+
+// Consider cache fresh for 7 days
+const QUOTES_CACHE_TTL_DAYS: i64 = 7;
+
+fn is_cache_fresh(fetched_at: &str) -> bool {
+  if let Ok(then) = chrono::DateTime::parse_from_rfc3339(fetched_at) {
+    let now = chrono::Local::now();
+    let diff = now.signed_duration_since(then.with_timezone(&chrono::Local));
+    diff.num_days() < QUOTES_CACHE_TTL_DAYS
+  } else {
+    false
+  }
+}
+
+async fn fetch_quotes_from_horus() -> Result<Vec<CachedQuote>, String> {
+  // Ask Iris (via Hermes) to generate 10 diverse, verified quotes with author and work.
+  // Uses the existing ask_iris path which routes to Horus over Tailscale when in privacy mode.
+  let prompt = r#"Give me exactly 10 diverse, real quotes from different authors and works. Each must be a genuine, verifiable quote — no paraphrases, no misattributions. Format as JSON array: [{"text": "...", "by": "Author", "work": "Work"}, ...]. No commentary, no markdown, just the JSON array."#;
+  let result = call_hermes_agent_impl(prompt, "").await;
+  // Try to parse JSON from the response
+  let json_start = result.find('[');
+  let json_end = result.rfind(']');
+  if let (Some(start), Some(end)) = (json_start, json_end) {
+    let json_str = &result[start..=end];
+    if let Ok(quotes) = serde_json::from_str::<Vec<CachedQuote>>(json_str) {
+      if quotes.len() >= 5 {
+        return Ok(quotes.into_iter().take(10).collect());
+      }
+    }
+  }
+  Err("Failed to parse quotes from Horus response".to_string())
+}
+
+#[tauri::command]
+async fn fetch_daily_quotes(app: tauri::AppHandle) -> Result<Vec<CachedQuote>, String> {
+  let cache_path = quotes_cache_path(&app);
+  // Try to load existing cache
+  if let Ok(cached) = fs::read_to_string(&cache_path) {
+    if let Ok(cache) = serde_json::from_str::<QuotesCache>(&cached) {
+      if is_cache_fresh(&cache.fetched_at) && cache.quotes.len() >= 10 {
+        return Ok(cache.quotes);
+      }
+    }
+  }
+  // Cache miss or stale — fetch fresh from Horus
+  match fetch_quotes_from_horus().await {
+    Ok(quotes) => {
+      let cache = QuotesCache { quotes: quotes.clone(), fetched_at: chrono::Local::now().to_rfc3339() };
+      let _ = fs::write(&cache_path, serde_json::to_string(&cache).unwrap_or_default());
+      Ok(quotes)
+    }
+    Err(e) => {
+      // If fetch fails but we have any cache (even stale), return it
+      if let Ok(cached) = fs::read_to_string(&cache_path) {
+        if let Ok(cache) = serde_json::from_str::<QuotesCache>(&cached) {
+          if !cache.quotes.is_empty() {
+            return Ok(cache.quotes);
+          }
+        }
+      }
+      Err(e)
+    }
+  }
+}
+
 // Opens a link in the user's default browser. Restricted to http(s) with no
 // whitespace or control characters, and launched without a shell (the URL is
 // a single argv entry), so neither a feed-supplied link nor anything else can
@@ -6814,8 +6898,9 @@ pub fn run() {
       clear_ollama_cloud_key,
       read_audit_log,
       fetch_daily_news,
-      fetch_movie_trailers,
-      open_external_url,
+            fetch_movie_trailers,
+            fetch_daily_quotes,
+            open_external_url,
       get_inana_config,
       disconnect_inana,
       fetch_inana_data,
