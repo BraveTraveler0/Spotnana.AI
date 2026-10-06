@@ -50,8 +50,32 @@ const FEED_STALE_MS = 30 * 60 * 1000;
 // a paraphrase dressed up as a quote. Iris's own daily spark replaces this
 // whenever her feed has one.
 const QUOTES = [
+  // Shakespeare — long, beautiful lines given priority by appearing first
+  { text: 'We are such stuff as dreams are made on, and our little life is rounded with a sleep.', by: 'William Shakespeare', work: 'The Tempest' },
+  { text: 'The earth has music for those who listen, and heaven finds a tongue in everything that grows.', by: 'William Shakespeare', work: 'The Taming of the Shrew' },
+  { text: 'Love all, trust a few, do wrong to none; be able for thine enemy rather in power than use, and keep thy friend under thy own life\'s key.', by: 'William Shakespeare', work: "All's Well That Ends Well" },
+  { text: 'Our doubts are traitors, and make us lose the good we oft might win, by fearing to attempt.', by: 'William Shakespeare', work: 'Measure for Measure' },
+  { text: 'What a piece of work is a man, how noble in reason, how infinite in faculty, in form and moving how express and admirable, in action how like an angel, in apprehension how like a god!', by: 'William Shakespeare', work: 'Hamlet' },
+  { text: 'This above all: to thine own self be true, and it must follow, as the night the day, thou canst not then be false to any man.', by: 'William Shakespeare', work: 'Hamlet' },
+  { text: 'There is a tide in the affairs of men which, taken at the flood, leads on to fortune; omitted, all the voyage of their life is bound in shallows and in miseries.', by: 'William Shakespeare', work: 'Julius Caesar' },
+  { text: 'Be not afraid of greatness: some are born great, some achieve greatness, and some have greatness thrust upon them.', by: 'William Shakespeare', work: 'Twelfth Night' },
+  { text: 'The robbed that smiles, steals something from the thief; he robs himself that spends a bootless grief.', by: 'William Shakespeare', work: 'Othello' },
+  { text: 'How far that little candle throws his beams! So shines a good deed in a naughty world.', by: 'William Shakespeare', work: 'The Merchant of Venice' },
+  { text: 'Go wisely and slowly. Those who rush stumble and fall.', by: 'William Shakespeare', work: 'Romeo and Juliet' },
+  { text: 'Cowards die many times before their deaths; the valiant never taste of death but once.', by: 'William Shakespeare', work: 'Julius Caesar' },
+  { text: 'My bounty is as boundless as the sea, my love as deep; the more I give to thee, the more I have, for both are infinite.', by: 'William Shakespeare', work: 'Romeo and Juliet' },
+  { text: 'Though she be but little, she is fierce.', by: 'William Shakespeare', work: "A Midsummer Night's Dream" },
+  { text: 'When sorrows come, they come not single spies, but in battalions.', by: 'William Shakespeare', work: 'Hamlet' },
+  { text: 'Let me not to the marriage of true minds admit impediments. Love is not love which alters when it alteration finds, or bends with the remover to remove.', by: 'William Shakespeare', work: 'Sonnet 116' },
+  { text: 'Like as the waves make towards the pebbled shore, so do our minutes hasten to their end, each changing place with that which goes before, in sequent toil all forwards do contend.', by: 'William Shakespeare', work: 'Sonnet 60' },
+  { text: 'The quality of mercy is not strained; it droppeth as the gentle rain from heaven upon the place beneath. It is twice blest: it blesseth him that gives and him that takes.', by: 'William Shakespeare', work: 'The Merchant of Venice' },
+  { text: 'All the world\'s a stage, and all the men and women merely players; they have their exits and their entrances, and one man in his time plays many parts.', by: 'William Shakespeare', work: 'As You Like It' },
+  { text: 'If music be the food of love, play on, give me excess of it; that surfeiting, the appetite may sicken, and so die.', by: 'William Shakespeare', work: 'Twelfth Night' },
+  { text: 'Shall I compare thee to a summer\'s day? Thou art more lovely and more temperate. Rough winds do shake the darling buds of May, and summer\'s lease hath all too short a date.', by: 'William Shakespeare', work: 'Sonnet 18' },
+  { text: 'No longer mourn for me when I am dead than you shall hear the surly sullen bell give warning to the world that I am fled from this vile world, with vilest worms to dwell.', by: 'William Shakespeare', work: 'Sonnet 71' },
+  // Other authors
   { text: "The struggle itself toward the heights is enough to fill a man's heart. One must imagine Sisyphus happy.", by: 'Albert Camus', work: 'The Myth of Sisyphus' },
-  { text: 'Not everything that is faced can be changed, but nothing can be changed until it is faced.', by: 'James Baldwin', work: '“As Much Truth as One Can Bear,” The New York Times Book Review, 1962' },
+  { text: 'Not everything that is faced can be changed, but nothing can be changed until it is faced.', by: 'James Baldwin', work: '"As Much Truth as One Can Bear," The New York Times Book Review, 1962' },
   { text: 'The world breaks everyone and afterward many are strong at the broken places.', by: 'Ernest Hemingway', work: 'A Farewell to Arms' },
   { text: 'We are all in the gutter, but some of us are looking at the stars.', by: 'Oscar Wilde', work: "Lady Windermere's Fan" },
   { text: 'There is no fate that cannot be surmounted by scorn.', by: 'Albert Camus', work: 'The Myth of Sisyphus' },
@@ -220,11 +244,16 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
       if (!isTauri || !active) return;
       let mounted = true;
       setQuoteLoading(true);
-      invoke<CachedQuote[]>('fetch_daily_quotes')
+      const timeoutPromise = new Promise<unknown>((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout fetching quotes')), 5000);
+      });
+      Promise.race([invoke<CachedQuote[]>('fetch_daily_quotes'), timeoutPromise])
         .then((quotes) => {
           if (mounted && quotes.length > 0) setCachedQuotes(quotes);
         })
-        .catch(console.error)
+        .catch((err) => {
+          console.error(err);
+        })
         .finally(() => { if (mounted) setQuoteLoading(false); });
       return () => { mounted = false; };
     }, [isTauri, active]);
@@ -501,11 +530,21 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   // Iris's own suggestions, then the things her weekly review lists to do (local
   // activities, standing tracks) until she writes those into the feed herself.
   const reviewCards = useMemo(() => reviewSuggestions(irisFeed?.review_sections ?? []), [irisFeed]);
+  // A recurring weekly goal (Writing session, Yoga, Meditation...) already has its own
+  // progress ring and rows on the Goals widget; echoing it again as a "Suggested" card
+  // is just noise, not a new idea. Anything with a goal_id, or whose title matches a
+  // current weekly goal by name, is filtered out here so Suggested only ever holds
+  // things you aren't already tracking.
+  const weeklyGoalTitles = useMemo(() => new Set((weekly?.goals ?? []).map((goal) => goal.title.trim().toLowerCase())), [weekly]);
+  const isWeeklyGoalEcho = useCallback(
+    (card: IrisTaskCard) => Boolean(card.goal_id) || weeklyGoalTitles.has(card.title.trim().toLowerCase()),
+    [weeklyGoalTitles],
+  );
   const suggestedCards = useMemo(() => {
-    const own = feedTasks?.suggested ?? [];
+    const own = (feedTasks?.suggested ?? []).filter((card) => !isWeeklyGoalEcho(card));
     const known = new Set(own.map((card) => card.title.trim().toLowerCase()));
-    return [...own, ...reviewCards.filter((card) => !known.has(card.title.trim().toLowerCase()))].filter((card) => !handled[cardKey(card)]);
-  }, [feedTasks, reviewCards, handled]);
+    return [...own, ...reviewCards.filter((card) => !known.has(card.title.trim().toLowerCase()) && !isWeeklyGoalEcho(card))].filter((card) => !handled[cardKey(card)]);
+  }, [feedTasks, reviewCards, handled, isWeeklyGoalEcho]);
 
   // Accepted cards wait in Next until Iris has rewritten the feed with her own
   // Next card for them (matched by title), or two days pass.
@@ -805,24 +844,19 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
 
           <Reveal delay={0.1}>
                       <section className="dd-section">
-                        <blockquote className="dd-quote">
-                          <>
-                            <p>&ldquo;{quote.text}&rdquo;</p>
-                            <footer>
-                              — {quote.by}, {quote.work}
-                            </footer>
-                            <button
-                              type="button"
-                              className="dd-quote-refresh"
-                              onClick={refreshQuote}
-                              disabled={quoteLoading || allQuotes.length <= 1}
-                              aria-label="Refresh quote"
-                              title="Cycle to next quote"
-                            >
-                              <RefreshCw size={14} className={quoteLoading ? 'dd-spin' : ''} />
-                            </button>
-                          </>
-                        </blockquote>
+                        <p className="dd-quote-line">
+                          &gt; {quote.text} — {quote.by}, <em>{quote.work}</em>
+                          <button
+                            type="button"
+                            className="dd-quote-refresh"
+                            onClick={refreshQuote}
+                            disabled={allQuotes.length <= 1}
+                            aria-label="Refresh quote"
+                            title="Cycle to next quote"
+                          >
+                            <RefreshCw size={14} className={quoteLoading ? 'dd-spin' : ''} />
+                          </button>
+                        </p>
                       </section>
                     </Reveal>
 

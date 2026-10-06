@@ -125,12 +125,12 @@ export default function GoalsWidget({ sections, weekly, taps, error, loaded, bre
     const ringDone = recurring ? repsDone : yearDone;
     const ringTotal = recurring ? repsTotal : yearTotal;
 
-    // Weekly: 100% at 90% of tasks. Monthly: 100% at 30% of tasks.
+    // Weekly: 100% at 80% of tasks. Monthly: 100% at 30% of tasks.
     // Both can exceed 100% (extra credit shown on the ring).
     const effectiveTotal = recurring
       ? period === 'monthly'
         ? Math.round(repsTotal * 0.3)  // monthly hits 100% at 30%
-      : Math.round(repsTotal * 0.9)  // weekly hits 100% at 90%
+      : Math.round(repsTotal * 0.8)  // weekly hits 100% at 80%
     : ringTotal;
 
   const percent = effectiveTotal > 0 ? Math.round((ringDone / effectiveTotal) * 100) : 0;

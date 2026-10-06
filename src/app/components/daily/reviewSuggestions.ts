@@ -113,6 +113,14 @@ function entryCard(entry: EventEntry, label: string, week: string): IrisTaskCard
   };
 }
 
+// A comma that starts a new named event: "AI Tinkerers Atlanta (monthly, check
+// site), Civic Tech Atlanta (civic action nights), Startup Pitch Night Tue Sep 29
+// (Manuel's)" is three events glued by commas, with no semicolon in sight. What
+// follows the comma reads as Capitalized Words, an optional day/date, then its own
+// "(...)" qualifier — unlike an ordinary descriptive comma ("free, 15 min e-bike"),
+// which never leads into a fresh "(" like that.
+const NEW_EVENT_AFTER_COMMA = /,\s+(?=(?:[A-Z][\w'.]*\s+){1,6}(?:\d{1,2}\s+)?\([^)]*\))/;
+
 // "**Painting:** three real options. (1) **A — B** — ... (2) **C** — ..." is one card
 // per numbered entry, titled with its bold name. "**Writing:** A meets on Saturday;
 // B runs every Sunday. None of these land this week." is two events; the closing
@@ -136,10 +144,12 @@ function activityCards(paragraph: string, week: string, today: Date, placed: Set
   const clauses: string[] = [];
   for (const sentence of sentencesOf(body)) {
     if (ADVISORY.test(sentence)) continue;
-    for (const clause of sentence.split(/;\s+/)) {
-      // "also BJJ and kickboxing on the same schedule" belongs to the event before it.
-      if (/^[a-z]/.test(clause) && clauses.length > 0) clauses[clauses.length - 1] += `; ${clause}`;
-      else clauses.push(clause);
+    for (const semiPiece of sentence.split(/;\s+/)) {
+      for (const clause of semiPiece.split(NEW_EVENT_AFTER_COMMA)) {
+        // "also BJJ and kickboxing on the same schedule" belongs to the event before it.
+        if (/^[a-z]/.test(clause) && clauses.length > 0) clauses[clauses.length - 1] += `; ${clause}`;
+        else clauses.push(clause);
+      }
     }
   }
   return clauses.map((clause) => activityCard(clause, label, week)).filter((card): card is IrisTaskCard => card !== null);
@@ -315,5 +325,10 @@ export function reviewSuggestions(sections: IrisFeedSection[], today: Date = new
   }
   const seen = new Set<string>();
   const unique = cards.filter((card) => (seen.has(card.id) ? false : (seen.add(card.id), true)));
-  return mergeSamePlace(unique).map((card) => (placed.has(card.id) ? card : scheduled(card, today)));
+  // Writing is a daily habit with its own weekly goal; its review paragraphs are
+  // status notes ("Book Project — Done."), not new ideas. A writing standing track
+  // is a reminder to write, which the Goals ring already tracks — neither belongs
+  // in Suggested. One-off writing events under Local Activities still show.
+  const fresh = unique.filter((card) => !(card.id.includes('-track-') && card.category === 'writing'));
+  return mergeSamePlace(fresh).map((card) => (placed.has(card.id) ? card : scheduled(card, today)));
 }
