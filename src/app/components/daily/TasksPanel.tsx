@@ -55,6 +55,7 @@ const SOURCE_LABELS: Record<string, string> = {
   calendar: 'Calendar',
   goal: 'Weekly goal',
   committed: 'You said',
+  inanna: 'From Inanna',
 };
 
 // Returns AREA · COST · CATEGORY pieces (all-caps, empty pieces dropped).

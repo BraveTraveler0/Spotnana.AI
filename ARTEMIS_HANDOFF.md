@@ -53,6 +53,14 @@ Weekly scan for events matching the Goals.md threads: **martial arts** (boxing, 
 
 **Confirmed nearby (2026-09):** The Moth StorySLAM Atlanta — Mon Sep 28, 7:30pm, Vinyl @ Center Stage (10.5 mi, THE priority event; user explicitly wants to do a Moth) · Eddie's Attic songwriters open mic, Decatur (7.0 mi, Mondays) · Capoeira Maculelê, downtown Decatur (bikeable) · Unit 2 Fitness BJJ/Muay Thai, Decatur · Atlanta Historical Fencing Academy (HEMA) · Painting with a Twist Edgewood (9.8 mi) + figure-drawing courses (Basic Tue 6–9pm $240/8wk) · X3 Sports free Muay Thai trial (10.2 mi) · SpeedAtlanta 25–39 @ Establishment Bar Midtown (10.3 mi) · Timeleft Atlanta weekly dinners · user's WFA course Sep 19–21 Atlanta (confirm venue).
 
+## 6.6 Inanna (MarketGenius) -> Artemis suggestions (added 2026-10-07 by Claude)
+
+MarketGenius keeps an outbox of things worth doing (nearby events Inanna's research found, within the travel distance the user set in MarketGenius > Opportunities, or anything sent with "Suggest in Artemis"). Artemis pulls it with its existing Inanna token:
+
+- `fetch_inana_suggestions` (Rust) -> `GET /api/artemis/suggestions` -> cards with ids starting `inanna-`, shown in Suggested with the label "From Inanna" (DailyDashboard.tsx, polled on open and every 15 min).
+- Accepting one adds a task on its date (`add_todo`, source "Inanna") and calls `respond_inana_suggestion` -> `POST /api/artemis/suggestions/:id {status: accepted}`; dismissing sends `dismissed`.
+- Only that status goes back. Nothing from any conversation (privacy mode or not) is sent.
+
 ## 7. Machine-readable summary
 
 ```json

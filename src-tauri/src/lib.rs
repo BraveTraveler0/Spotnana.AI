@@ -6657,6 +6657,69 @@ async fn fetch_inana_product(config: &InanaConfig, id: &str, name: &str) -> Inan
   data
 }
 
+// Inanna (MarketGenius) -> Artemis suggestions. Inanna queues things worth
+// doing (nearby events she found, or anything the user sent with "Suggest in
+// Artemis") and Artemis pulls them into its Suggested list. Same token and
+// trust tier as fetch_inana_data; the only thing sent back is "accepted" or
+// "dismissed" for a card that came from Inanna. Nothing from a conversation
+// is ever sent.
+async fn inana_post(config: &InanaConfig, path: &str, body: serde_json::Value) -> Result<(), InanaFetchError> {
+  let response = http_client()
+    .post(format!("{}{path}", config.api_url))
+    .bearer_auth(&config.token)
+    .json(&body)
+    .timeout(INANA_REQUEST_TIMEOUT)
+    .send()
+    .await
+    .map_err(|error| InanaFetchError::Failed(format!("Could not reach Inana: {error}")))?;
+  match response.status().as_u16() {
+    401 => Err(InanaFetchError::AuthExpired),
+    200..=299 => Ok(()),
+    status => Err(InanaFetchError::Failed(format!("HTTP {status}"))),
+  }
+}
+
+fn linked_inana_config(app: &tauri::AppHandle) -> Option<InanaConfig> {
+  let mut config = read_inana_config(app);
+  if config.token.is_empty() {
+    return None;
+  }
+  if config.api_url.is_empty() {
+    config.api_url = INANA_DEFAULT_API_URL.to_string();
+  }
+  Some(config)
+}
+
+#[tauri::command]
+async fn fetch_inana_suggestions(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+  let Some(config) = linked_inana_config(&app) else {
+    return Ok(serde_json::json!({ "suggestions": [] }));
+  };
+  match inana_get(&config, "/api/artemis/suggestions").await {
+    Ok(value) => Ok(value),
+    Err(InanaFetchError::AuthExpired) => Err(INANA_AUTH_EXPIRED.to_string()),
+    Err(InanaFetchError::NotConnected) => Ok(serde_json::json!({ "suggestions": [] })),
+    Err(InanaFetchError::Failed(message)) => Err(message),
+  }
+}
+
+#[tauri::command]
+async fn respond_inana_suggestion(app: tauri::AppHandle, id: String, status: String) -> Result<(), String> {
+  if status != "accepted" && status != "dismissed" {
+    return Err("status must be accepted or dismissed".to_string());
+  }
+  let Some(config) = linked_inana_config(&app) else {
+    return Ok(());
+  };
+  let safe_id: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+  match inana_post(&config, &format!("/api/artemis/suggestions/{safe_id}"), serde_json::json!({ "status": status })).await {
+    Ok(()) => Ok(()),
+    Err(InanaFetchError::AuthExpired) => Err(INANA_AUTH_EXPIRED.to_string()),
+    Err(InanaFetchError::NotConnected) => Ok(()),
+    Err(InanaFetchError::Failed(message)) => Err(message),
+  }
+}
+
 // One call that gathers everything the Daily dashboard's Inana panels need,
 // with every product fetched in parallel. Deliberately returns raw JSON: the
 // shaping (windows, deltas, which metrics to feature) lives in the frontend
@@ -6904,6 +6967,8 @@ pub fn run() {
       get_inana_config,
       disconnect_inana,
       fetch_inana_data,
+      fetch_inana_suggestions,
+      respond_inana_suggestion,
       fetch_daily_weather,
       get_location,
       set_location,

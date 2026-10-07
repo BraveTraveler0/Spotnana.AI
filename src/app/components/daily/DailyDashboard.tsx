@@ -25,6 +25,10 @@ import WeatherGlyph from './WeatherGlyph';
 import type { DailyTask, GoalSection, GoalSubStep, IrisFeedContent, IrisTaskCard, LocationInfo, NewsItem, ScheduledTaskInfo, TasteRec, WeatherInfo, WeeklyGoals } from './types';
 import './daily.css';
 
+// Cards Inanna (MarketGenius) queued for Artemis carry ids starting with this.
+const INANNA_PREFIX = 'inanna-';
+const INANNA_POLL_MS = 15 * 60 * 1000;
+
 interface Props {
   isTauri: boolean;
   // The dashboard stays mounted once opened so weather, headlines and charts
@@ -205,6 +209,31 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   const [suggestionAnswered, setSuggestionAnswered] = useState(false);
   const [suggestionResponding, setSuggestionResponding] = useState(false);
   const { handled, dismiss: dismissCard, markAccepted } = useHandledCards();
+  // Suggestions from Inanna (MarketGenius): pulled when the Daily view opens and
+  // every 15 minutes; a failure just leaves the list as it was.
+  const [inannaCards, setInannaCards] = useState<IrisTaskCard[]>([]);
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      invoke<{ suggestions?: { id: string; title: string; detail?: string; when?: string; link?: string; area?: string; cost?: string; category?: string }[] }>('fetch_inana_suggestions')
+        .then((result) => {
+          if (!live) return;
+          setInannaCards((result.suggestions ?? []).map((s) => ({
+            id: s.id, title: s.title, detail: s.detail ?? '', source: 'inanna', category: s.category === 'event' ? 'other' : (s.category || 'other'),
+            area: s.area || null, cost: s.cost || null, when: s.when || null, link: s.link || null, goal_id: null, action: 'accept',
+          })));
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const timer = window.setInterval(load, INANNA_POLL_MS);
+    return () => { live = false; window.clearInterval(timer); };
+  }, []);
+  // Dismissing one of Inanna's cards tells her too, so it isn't suggested again.
+  const dismissAnyCard = (card: IrisTaskCard) => {
+    dismissCard(card);
+    if (card.id.startsWith(INANNA_PREFIX)) void invoke('respond_inana_suggestion', { id: card.id, status: 'dismissed' }).catch(() => undefined);
+  };
   const { finished, finish: finishCard, undo: undoFinished } = useFinishedCards();
   const { choices: postChoices, choose: choosePost, restore: restorePosts } = useHandledPosts();
   const scout = useScoutRequest();
@@ -548,10 +577,13 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     [weeklyGoalTitles],
   );
   const suggestedCards = useMemo(() => {
-    const own = (feedTasks?.suggested ?? []).filter((card) => !isHiddenSidePanelGoal(card) && !isWeeklyGoalEcho(card));
+    const iris = (feedTasks?.suggested ?? []).filter((card) => !isHiddenSidePanelGoal(card) && !isWeeklyGoalEcho(card));
+    const irisTitles = new Set(iris.map((card) => card.title.trim().toLowerCase()));
+    // Inanna's cards (MarketGenius), unless Iris already suggested the same thing.
+    const own = [...iris, ...inannaCards.filter((card) => !irisTitles.has(card.title.trim().toLowerCase()))];
     const known = new Set(own.map((card) => card.title.trim().toLowerCase()));
     return [...own, ...reviewCards.filter((card) => !isHiddenSidePanelGoal(card) && !known.has(card.title.trim().toLowerCase()) && !isWeeklyGoalEcho(card))].filter((card) => !handled[cardKey(card)]);
-  }, [feedTasks, reviewCards, handled, isWeeklyGoalEcho]);
+  }, [feedTasks, inannaCards, reviewCards, handled, isWeeklyGoalEcho]);
 
   // Accepted cards wait in Next until Iris has rewritten the feed with her own
   // Next card for them (matched by title), or two days pass.
@@ -565,6 +597,15 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   }, [feedTasks, handled, finished, cardsWrittenAt]);
 
   const acceptCard = async (card: IrisTaskCard) => {
+    if (card.id.startsWith(INANNA_PREFIX)) {
+      // From Inanna (MarketGenius): onto your own list on its day, and Inanna
+      // hears it was taken so she stops suggesting it.
+      const note = [card.detail, card.link].filter(Boolean).join(' ');
+      if (!(await addTask({ label: card.title, note, source: 'Inanna', when: card.when, area: card.area, cost: card.cost }))) return;
+      dismissCard(card);
+      void invoke('respond_inana_suggestion', { id: card.id, status: 'accepted' }).catch(() => undefined);
+      return;
+    }
     if (card.id.startsWith(REVIEW_PREFIX)) {
       // Iris has never heard of these ids, so there is nothing to tell her:
       // taking one on just puts it on your own list, on the day and time the
@@ -813,7 +854,7 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
               onCancelScheduled={cancelScheduled}
               onIrisAnswer={answerSuggestion}
               onAcceptCard={acceptCard}
-              onDismissCard={dismissCard}
+              onDismissCard={dismissAnyCard}
               onCompleteCard={completeCard}
               onUndoFinished={undoFinished}
               onOpenLink={openLink}
