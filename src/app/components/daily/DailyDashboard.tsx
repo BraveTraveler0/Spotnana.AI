@@ -46,11 +46,11 @@ const PENDING_ACCEPT_MS = 2 * 24 * 60 * 60 * 1000;
 const SCOPE_STORAGE_KEY = 'artemis-inana-scope';
 const FEED_STALE_MS = 30 * 60 * 1000;
 
-// Keep these recurring goals in GoalsWidget, but never echo them into the
-// dashboard side-panel cards. Iris can emit them from next[] or review_sections.
+// Keep recurring goals in GoalsWidget, but never echo them into the dashboard
+// side-panel cards. Iris can emit them from next[] or review_sections.
 const isHiddenSidePanelGoal = (card: IrisTaskCard) => {
   const text = `${card.title} ${card.detail ?? ''}`.toLowerCase().replace(/[-_]+/g, ' ');
-  return /writing\s+session|weight\s+training|strength\s+training/.test(text);
+  return Boolean(card.goal_id) || /weekly\s+goal|weekly\s*[·•-]\s*\d+\s+of\s+\d+\s+done/.test(text);
 };
 
 // A small, verified set — each is a real line with its author and work, never
