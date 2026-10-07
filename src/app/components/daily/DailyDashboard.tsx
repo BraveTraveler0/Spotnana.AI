@@ -46,6 +46,13 @@ const PENDING_ACCEPT_MS = 2 * 24 * 60 * 60 * 1000;
 const SCOPE_STORAGE_KEY = 'artemis-inana-scope';
 const FEED_STALE_MS = 30 * 60 * 1000;
 
+// Keep these recurring goals in GoalsWidget, but never echo them into the
+// dashboard side-panel cards. Iris can emit them from next[] or review_sections.
+const isHiddenSidePanelGoal = (card: IrisTaskCard) => {
+  const text = `${card.title} ${card.detail ?? ''}`.toLowerCase().replace(/[-_]+/g, ' ');
+  return /writing\s+session|weight\s+training|strength\s+training/.test(text);
+};
+
 // A small, verified set — each is a real line with its author and work, never
 // a paraphrase dressed up as a quote. Iris's own daily spark replaces this
 // whenever her feed has one.
@@ -523,7 +530,7 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
   // Minus what was dismissed, accepted or checked off. A weekly minimum stays,
   // with its count moved up, until the week's target is met.
   const nextCards = useMemo(
-    () => withoutFinished((feedTasks?.next ?? []).filter((card) => !handled[cardKey(card)]), finished, cardsWrittenAt),
+    () => withoutFinished((feedTasks?.next ?? []).filter((card) => !isHiddenSidePanelGoal(card) && !handled[cardKey(card)]), finished, cardsWrittenAt),
     [feedTasks, handled, finished, cardsWrittenAt],
   );
   const finishedCards = useMemo(() => recentlyFinished(finished), [finished]);
@@ -541,9 +548,9 @@ export default function DailyDashboard({ isTauri, active, onOpenGoals, onOpenSet
     [weeklyGoalTitles],
   );
   const suggestedCards = useMemo(() => {
-    const own = (feedTasks?.suggested ?? []).filter((card) => !isWeeklyGoalEcho(card));
+    const own = (feedTasks?.suggested ?? []).filter((card) => !isHiddenSidePanelGoal(card) && !isWeeklyGoalEcho(card));
     const known = new Set(own.map((card) => card.title.trim().toLowerCase()));
-    return [...own, ...reviewCards.filter((card) => !known.has(card.title.trim().toLowerCase()) && !isWeeklyGoalEcho(card))].filter((card) => !handled[cardKey(card)]);
+    return [...own, ...reviewCards.filter((card) => !isHiddenSidePanelGoal(card) && !known.has(card.title.trim().toLowerCase()) && !isWeeklyGoalEcho(card))].filter((card) => !handled[cardKey(card)]);
   }, [feedTasks, reviewCards, handled, isWeeklyGoalEcho]);
 
   // Accepted cards wait in Next until Iris has rewritten the feed with her own
